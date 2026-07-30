@@ -149,8 +149,8 @@ P1 findings. The current hardening changes respond by:
   and
 - validating real runtime-emitted records against the canonical schemas.
 
-These changes have local automated evidence, but they are not a final PASS
-until a fresh independent reviewer evaluates the committed repaired candidate.
+These changes have local automated evidence, but the final independent review
+did not return PASS.
 
 ## Current automated evidence
 
@@ -192,10 +192,27 @@ The final hardening cycle established that the bundled child process has no
 authenticated native channel for host-observed delegation identity or active
 host effect approval. A caller flag or model-authored file would only be another
 claim. Accordingly, `preflight` and `handoff prepare` now exit 4 instead of
-accepting self-asserted capability. This is the deliberate fail-closed outcome:
-the current native surface cannot produce `release_ready`, even when all local
-source tests pass. Perplexity should treat a future authenticated Codex host
-capability as a prerequisite, not recommend an MCP/service/hook workaround.
+accepting self-asserted capability. This blocks the intended forward path, but
+the final review found that it is not yet a complete authority boundary:
+`evidence exec` does not require successful preflight, and `validate` does not
+require authenticated capability attestation. Perplexity should treat a future
+authenticated Codex host capability as a prerequisite, not recommend an
+MCP/service/hook workaround.
+
+### Final architect verdict
+
+The final review after two repair cycles returned FAIL/BLOCKED with reachable
+P1 findings:
+
+- protected effects can still be hidden behind unclassified executables,
+  reordered Git options, or obfuscated interpreter payloads because
+  `evidence exec` is callable without a successful capability preflight; and
+- a handcrafted, internally hash-consistent `release_ready` bundle can still be
+  accepted by `validate` because validation has no authenticated capability
+  gate.
+
+The workflow ceiling is exhausted, so no third repair cycle is authorized.
+The branch is a documented blocked checkpoint, not a release candidate.
 
 ### Empirical qualification
 
@@ -212,7 +229,8 @@ The following cannot be inferred from local source tests and remain pending:
 - Pocket Tasks performance receipts for delegation, turn, runtime, and
   trustworthy token limits;
 - directory/name/trademark clearance; and
-- final independent architect PASS with no P0/P1 findings.
+- a future independent architect PASS with no P0/P1 findings after the source
+  blockers are resolved under fresh human authority.
 
 The current machine runs Node 26, so its passing runtime tests do not substitute
 for the required Node 22 platform matrix.

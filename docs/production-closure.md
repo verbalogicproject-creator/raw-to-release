@@ -8,10 +8,10 @@ No pending receipt is represented as a pass.
 | Ad hoc or concurrent state writes | lock, immutable generations, event chain, manifest pointer transaction | lock, immutable confirmation, corrupt-log and concurrent execution tests | platform rename/lock matrix pending | source hardened; release pending |
 | Mutable or mismatched approval | proposal revision/hash and typed receipt | differing-hash confirmation test | interactive Dot journey pending | source PASS; release pending |
 | Authority drift / invalid DAG / limits | sealed authority and lifecycle ceilings | drift, dependency, limit tests | retry/fallback dogfood pending | source PASS; release pending |
-| Fabricated command evidence | approved argv, `shell:false`, derived receipt | replacement argv and process exit tests | tester journeys pending | source PASS; release pending |
-| Same or missing identities | provenance-bound cross-field checks | same-ID and stale-SHA tests | Codex durable-ID visibility pending | source PASS; release pending |
+| Fabricated/protected command evidence | approved argv, `shell:false`, derived receipt, partial classifier | direct/absolute/interpreter cases pass, but bypass classes remain | authenticated host execution boundary unavailable | P1 OPEN; BLOCKED |
+| Same or missing identities | provenance-bound cross-field checks; intended path exits 4 | same-ID, stale-SHA, and caller-flag rejection tests | Codex durable-ID visibility unavailable | BLOCKED |
 | Unsafe or stale artifacts | tracked regular paths, SHA, Git blob/owner | path, symlink, untracked, corruption tests | OS path receipts pending | source PASS; release pending |
-| False release-ready state | read-only recomputation of Git and receipts | adversarial validation tests | two reconstructed bundles pending | source PASS; release pending |
+| False release-ready state | read-only recomputation of Git and receipts | existing mutations pass, but capability-attestation mutation is missing | two reconstructed bundles pending | P1 OPEN; BLOCKED |
 | Legacy mutation | audit-only contract-1 path | byte-preserving audit-v1 test | legacy installed fixture pending | source PASS; release pending |
 | Reproducible bundle | pinned TypeScript/Ajv, single-file ESM | rebuild and import/secret/path scans | Node 22 OS receipts pending | source PASS; release pending |
 | Dependency/license/security | exact lock, CycloneDX SBOM, licenses | CI offline checks; `npm audit` reports zero vulnerabilities | independent platform audit pending | local PASS; release pending |
@@ -28,6 +28,8 @@ submission is performed by this workflow.
 
 The current native Codex child-process surface does not expose authenticated
 delegation identity or active host-effect approval to `r2rctl`. Caller flags are
-not evidence, so the CLI exits 4 at preflight/final handoff. Release remains
-blocked until that host capability exists; no MCP, service, hook, or custom
-orchestration substitute is authorized.
+not evidence, so the CLI exits 4 at preflight/final handoff. Final review also
+found that `evidence exec` can be reached without preflight and that `validate`
+lacks a capability-attestation gate. After two repair cycles, the workflow is
+blocked with P1 findings open. No MCP, service, hook, or custom orchestration
+substitute is authorized.
