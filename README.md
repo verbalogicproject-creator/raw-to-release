@@ -1,81 +1,72 @@
-# Codex Model Team
+# Raw to Release
 
-`codex-model-team` installs a project-agnostic personal delegation team for
-Codex. It uses Codex custom agents rather than API substitution, so the team
-can use models available through the signed-in Codex surface, including the
-GPT-5.3-Codex-Spark research preview when the account exposes it.
+Raw to Release turns a rough idea into a tested, independently reviewed local
+branch. Its provider-neutral method is packaged as a native, skills-only Codex
+plugin. It never autonomously merges, pushes, opens a PR, deploys, or publishes.
 
-The stable roles are:
+Phase 1 is verified only for Codex CLI. Desktop, IDE, cloud, model visibility,
+and cost enforcement remain unverified or unobservable until recorded otherwise.
 
-| Agent | Model | Responsibility |
-| --- | --- | --- |
-| `architect` | `gpt-5.6-sol` | Ambiguous, important, architectural, and high-risk planning or review |
-| `operator` | `gpt-5.6-terra` | Integrated implementation, tools, coordination, and verification |
-| `analyst` | `gpt-5.6-luna` | Clear, repeatable, read-heavy, and high-volume knowledge work |
-| `sprinter` | `gpt-5.3-codex-spark` | Near-instant, tightly bounded edits and experiments |
+## Install locally
 
-Repository guidance remains authoritative for local architecture, commands,
-permissions, and completion rules. The personal team only supplies reusable
-roles and routing behavior across coding, research, writing, planning, browser
-investigation, and ordinary general-assistance work.
-
-## Install
-
-Preview the exact changes first:
+Requirements: Codex CLI, Git, and Node 22 or newer. The installed plugin ships a
+compiled dependency-free CLI and does not require `npm install`. From this
+repository root:
 
 ```sh
-python teamctl.py install --dry-run
+codex plugin marketplace add .
+codex plugin add raw-to-release@raw-to-release-local
+codex plugin list --json
 ```
 
-Install and validate:
+Start a new Codex CLI thread in a clean repository and say:
 
-```sh
-python teamctl.py install
-python teamctl.py validate --installed
+```text
+Use $raw-to-release to turn my volunteer task idea into a verified local branch.
 ```
 
-Use `--codex-home PATH` for an isolated installation or test. Otherwise the
-CLI uses `CODEX_HOME` when set and `~/.codex` as the fallback.
+Raw to Release will interview you through five confirmed Dots, show a plan for
+approval, implement only on `r2r/<run-id>`, test and review committed work, and
+leave an evidence-backed handoff. Network access, dependency installation, and
+other protected effects still use the host's approval flow.
 
-The installer:
-
-- preserves the existing parent model and reasoning setting;
-- preserves project trust, MCP, hook, and unrelated configuration;
-- adds only the required `[agents]` defaults when they are absent;
-- manages one marked block in `AGENTS.md`;
-- refuses to overwrite unmanaged agent files;
-- stores timestamped backups under the selected Codex home;
-- records hashes in `codex-model-team.manifest.json` for safe updates and
-  uninstall.
-
-Uninstall removes only content still matching the managed manifest:
+Remove the local installation without changing this repository:
 
 ```sh
-python teamctl.py uninstall --dry-run
-python teamctl.py uninstall
+codex plugin remove raw-to-release@raw-to-release-local
+codex plugin marketplace remove raw-to-release-local
 ```
 
-## Development
+See the current official [Codex plugin CLI reference](https://learn.chatgpt.com/docs/developer-commands?surface=cli#cli-codex-plugin).
+
+## Learn on Pocket Tasks
+
+The [Pocket Tasks curriculum](examples/pocket-tasks/README.md) compounds one
+volunteer-task CLI through intake, planning, implementation, testing, review,
+and handoff. It includes novice, expert, and feature-only paths with a verify
+command at every checkpoint.
+
+## Architecture and development
+
+- `method/` — normative provider-neutral lifecycle and contracts.
+- `plugins/raw-to-release/` — native Codex binding and artifact templates.
+- `examples/pocket-tasks/` — Phase 1 onboarding project.
+- `.raw-to-release/` — target-project records created during a run.
+
+Development pins TypeScript and Ajv as build-only dependencies; the consumer
+bundle has zero package dependencies:
 
 ```sh
-python teamctl.py validate
+npm ci
+npm run build && npm run check:bundle && npm run check:schemas
+npm test && npm run check:supply-chain -- --check
+python scripts/sync_method.py --check
+python scripts/validate_repository.py
 python -m unittest discover -s tests -v
+python -m unittest discover -s examples/pocket-tasks/tests -v
+python scripts/run_official_plugin_validator.py
 ```
 
-See [docs/dogfood.md](docs/dogfood.md) for routing and safety acceptance
-scenarios.
-
-The implementation follows Codex's documented
-[custom-agent](https://learn.chatgpt.com/docs/agent-configuration/subagents)
-and [global configuration](https://learn.chatgpt.com/docs/config-file/config-basic)
-surfaces.
-
-## Boundaries
-
-- This kit does not call a hidden model API or convert a ChatGPT subscription
-  into API access.
-- Model availability is detected by the Codex surface at spawn time. The
-  routing contract defines fallbacks when a preferred model is unavailable.
-- Models may investigate and propose protected actions, but active host,
-  sandbox, and human-approval policies retain execution authority.
-- Model narration is never treated as proof that an external effect occurred.
+Read [architecture](docs/architecture.md), [lifecycle](docs/lifecycle.md),
+[acceptance](docs/acceptance.md), [compatibility](docs/compatibility.md),
+[migration](docs/migration.md), and the [roadmap](docs/roadmap.md).

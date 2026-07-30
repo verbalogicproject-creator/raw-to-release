@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw-to-release.dev/contracts/2/task-record.json",
+  "type": "object",
+  "required": ["contract_version", "task_id", "dot_references", "dependencies", "selected_route", "selected_tier", "allowed_tools", "forbidden_tools", "envelope"],
+  "properties": {
+    "contract_version": {"$ref": "common.json#/$defs/contract_version"},
+    "task_id": {"$ref": "common.json#/$defs/identifier"},
+    "dot_references": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "common.json#/$defs/dot_name"}},
+    "dependencies": {"type": "array", "uniqueItems": true, "items": {"$ref": "common.json#/$defs/identifier"}},
+    "selected_route": {"type": "string", "minLength": 1},
+    "selected_tier": {"enum": ["economy", "balanced", "deep", "review"]},
+    "allowed_tools": {"type": "array", "items": {"type": "string"}},
+    "forbidden_tools": {"type": "array", "items": {"type": "string"}},
+    "envelope": {"$ref": "task-envelope.json"},
+    "result": {"$ref": "task-result.json"}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw-to-release.dev/contracts/2/capability-report.json",
+  "type": "object",
+  "required": ["contract_version", "surface", "surface_version", "capabilities"],
+  "properties": {
+    "contract_version": {"$ref": "common.json#/$defs/contract_version"},
+    "surface": {"type": "string", "minLength": 1},
+    "surface_version": {"type": ["string", "null"]},
+    "capabilities": {"type": "object", "required": ["interaction", "model_visibility", "approvals", "persistence", "concurrency", "budget_enforcement"], "additionalProperties": false, "properties": {"interaction": {"$ref": "common.json#/$defs/capability_status"}, "model_visibility": {"$ref": "common.json#/$defs/capability_status"}, "approvals": {"$ref": "common.json#/$defs/capability_status"}, "persistence": {"$ref": "common.json#/$defs/capability_status"}, "concurrency": {"$ref": "common.json#/$defs/capability_status"}, "budget_enforcement": {"$ref": "common.json#/$defs/capability_status"}}}
+  },
+  "additionalProperties": false
+}

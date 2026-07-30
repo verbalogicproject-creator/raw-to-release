@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw-to-release.dev/contracts/2/tasks.json",
+  "type": "object",
+  "required": ["contract_version", "run_id", "tasks"],
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": {"$ref": "common.json#/$defs/contract_version"},
+    "run_id": {"$ref": "common.json#/$defs/run_id"},
+    "tasks": {"type": "array", "maxItems": 8, "items": {"$ref": "task-record.json"}}
+  }
+}

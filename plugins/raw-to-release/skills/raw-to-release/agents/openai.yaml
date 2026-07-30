@@ -1,0 +1,4 @@
+interface:
+  display_name: "Raw to Release"
+  short_description: "Build a verified local branch"
+  default_prompt: "Use $raw-to-release to take this idea through a verified local handoff."

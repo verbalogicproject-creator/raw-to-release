@@ -1,0 +1,18 @@
+[
+  {"name":"clean existing repository","event":"preflight_existing","input":{"clean":true},"expected":"intake"},
+  {"name":"dirty existing repository","event":"preflight_existing","input":{"clean":false},"expected":"blocked"},
+  {"name":"greenfield initialization confirmed","event":"greenfield_init","input":{"confirmed":true},"expected":"intake"},
+  {"name":"greenfield initialization denied","event":"greenfield_init","input":{"confirmed":false},"expected":"blocked"},
+  {"name":"resume valid checkpoint","event":"resume","input":{"artifacts_valid":true,"committed_state":"approved"},"expected":"approved"},
+  {"name":"resume corrupt checkpoint","event":"resume","input":{"artifacts_valid":false,"committed_state":"approved"},"expected":"blocked"},
+  {"name":"plan rejection","event":"plan_rejected","input":{},"expected":"intent_confirmed"},
+  {"name":"worker fallback","event":"worker_failure","input":{"fallback_available":true},"expected":"implementing"},
+  {"name":"worker without fallback","event":"worker_failure","input":{"fallback_available":false},"expected":"blocked"},
+  {"name":"single retry","event":"retry","input":{"retries":1},"expected":"implementing"},
+  {"name":"retry exhaustion","event":"retry","input":{"retries":2},"expected":"blocked"},
+  {"name":"abort","event":"abort","input":{},"expected":"aborted"},
+  {"name":"protected effect stop","event":"protected_effect","input":{"approved":false},"expected":"blocked"},
+  {"name":"protected effect approved","event":"protected_effect","input":{"approved":true},"expected":"implementing"},
+  {"name":"review failure repair","event":"review_failure","input":{"fix_review_cycles":1},"expected":"implementing"},
+  {"name":"review repair exhaustion","event":"review_failure","input":{"fix_review_cycles":2},"expected":"blocked"}
+]

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw-to-release.dev/contracts/2/intent-record.json",
+  "type": "object",
+  "required": ["contract_version", "run_id", "revision", "dots", "confirmation_state", "privacy_acknowledged", "provenance"],
+  "properties": {
+    "contract_version": {"$ref": "common.json#/$defs/contract_version"},
+    "run_id": {"$ref": "common.json#/$defs/run_id"},
+    "revision": {"type": "integer", "minimum": 1},
+    "dots": {
+      "type": "object",
+      "required": ["literal_task", "strategic_intent", "boundaries", "task_type", "relevant_principles"],
+      "additionalProperties": false,
+      "properties": {
+        "literal_task": {"$ref": "#/$defs/dot"},
+        "strategic_intent": {"$ref": "#/$defs/dot"},
+        "boundaries": {"$ref": "#/$defs/dot"},
+        "task_type": {"$ref": "#/$defs/dot"},
+        "relevant_principles": {"$ref": "#/$defs/dot"}
+      }
+    },
+    "confirmation_state": {"enum": ["draft", "confirmed"]},
+    "privacy_acknowledged": {"const": true},
+    "provenance": {
+      "type": "object", "required": ["source", "recorded_at"], "additionalProperties": false,
+      "properties": {"source": {"enum": ["user", "imported"]}, "recorded_at": {"$ref": "common.json#/$defs/timestamp"}}
+    }
+  },
+  "$defs": {
+    "dot": {
+      "type": "object", "required": ["value", "confirmed", "confirmed_at"], "additionalProperties": false,
+      "properties": {"value": {"type": "string", "minLength": 1}, "confirmed": {"type": "boolean"}, "confirmed_at": {"type": ["string", "null"]}}
+    }
+  },
+  "additionalProperties": false
+}

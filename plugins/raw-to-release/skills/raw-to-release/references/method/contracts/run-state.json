@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw-to-release.dev/contracts/2/run-state.json",
+  "type": "object",
+  "required": ["contract_version", "run_id", "state", "history", "counters", "gates", "artifacts", "protected_effects_performed"],
+  "properties": {
+    "contract_version": {"$ref": "common.json#/$defs/contract_version"},
+    "run_id": {"$ref": "common.json#/$defs/run_id"},
+    "state": {"$ref": "#/$defs/state"},
+    "history": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/state"}},
+    "counters": {"type": "object", "required": ["delegations", "concurrent_agents", "implementation_tasks", "fix_review_cycles", "retries"], "additionalProperties": false, "properties": {"delegations": {"type": "integer", "minimum": 0, "maximum": 12}, "concurrent_agents": {"type": "integer", "minimum": 0, "maximum": 3}, "implementation_tasks": {"type": "integer", "minimum": 0, "maximum": 8}, "fix_review_cycles": {"type": "integer", "minimum": 0, "maximum": 2}, "retries": {"type": "integer", "minimum": 0, "maximum": 1}}},
+    "gates": {"type": "object", "required": ["privacy_acknowledged", "dots_confirmed", "plan_approved", "branch_created", "implementation_committed", "tests_fresh", "tests_outcome", "test_evidence_ids", "review_independent", "review_outcome", "review_evidence_ids", "handoff_committed", "final_worktree_clean"], "additionalProperties": false, "properties": {"privacy_acknowledged": {"type": "boolean"}, "dots_confirmed": {"type": "boolean"}, "plan_approved": {"type": "boolean"}, "branch_created": {"type": "boolean"}, "implementation_committed": {"type": "boolean"}, "tests_fresh": {"type": "boolean"}, "tests_outcome": {"enum": ["pass", "fail", "unknown"]}, "test_evidence_ids": {"type": "array", "items": {"$ref": "common.json#/$defs/identifier"}}, "review_independent": {"type": "boolean"}, "review_outcome": {"enum": ["pass", "fail", "unknown"]}, "review_evidence_ids": {"type": "array", "items": {"$ref": "common.json#/$defs/identifier"}}, "handoff_committed": {"type": "boolean"}, "final_worktree_clean": {"type": "boolean"}}},
+    "artifacts": {"type": "object", "required": ["intent", "plan", "tasks", "task_records", "verification", "handoff"], "additionalProperties": false, "properties": {"intent": {"type": "string"}, "plan": {"type": "string"}, "tasks": {"type": "string"}, "task_records": {"type": "array", "items": {"type": "string"}}, "verification": {"type": "string"}, "handoff": {"type": "string"}}},
+    "protected_effects_performed": {"type": "array", "maxItems": 0}
+  },
+  "$defs": {"state": {"enum": ["intake", "intent_confirmed", "planned", "approved", "implementing", "verifying", "release_ready", "blocked", "aborted"]}},
+  "additionalProperties": false
+}

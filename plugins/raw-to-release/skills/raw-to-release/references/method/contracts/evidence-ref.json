@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw-to-release.dev/contracts/2/evidence-ref.json",
+  "type": "object",
+  "required": ["contract_version", "evidence_id", "run_id", "kind", "observer", "observed_at", "outcome", "command_or_source", "acceptance_criterion"],
+  "properties": {
+    "contract_version": {"$ref": "common.json#/$defs/contract_version"},
+    "evidence_id": {"$ref": "common.json#/$defs/identifier"},
+    "run_id": {"$ref": "common.json#/$defs/run_id"},
+    "task_id": {"$ref": "common.json#/$defs/identifier"},
+    "kind": {"enum": ["command", "review", "artifact", "observation"]},
+    "observer": {"type": "string", "minLength": 1},
+    "observed_at": {"$ref": "common.json#/$defs/timestamp"},
+    "outcome": {"enum": ["pass", "fail", "unknown"]},
+    "command_or_source": {"type": "string", "minLength": 1},
+    "artifact_locator": {"type": "string"},
+    "artifact_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "acceptance_criterion": {"$ref": "common.json#/$defs/identifier"}
+  },
+  "additionalProperties": false
+}

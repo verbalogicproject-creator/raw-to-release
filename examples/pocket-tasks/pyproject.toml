@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "raw-to-release-pocket-tasks"
+version = "0.1.0"
+description = "Compounding Raw to Release tutorial CLI"
+requires-python = ">=3.11"
+
+[project.scripts]
+pocket-tasks = "pocket_tasks.cli:main"

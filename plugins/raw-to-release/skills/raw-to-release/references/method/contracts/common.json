@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw-to-release.dev/contracts/2/common.json",
+  "$defs": {
+    "contract_version": {"type": "string", "pattern": "^2\\.[0-9]+\\.[0-9]+$"},
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "git_sha": {"type": "string", "pattern": "^[a-f0-9]{40,64}$"},
+    "safe_path": {"type": "string", "pattern": "^(?![/\\\\])(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)).+$"},
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+    "run_id": {"type": "string", "pattern": "^[0-9]{8}-[0-9]{4}-[a-z0-9]+(?:-[a-z0-9]+)*$"},
+    "timestamp": {"type": "string", "minLength": 1},
+    "dot_name": {"enum": ["literal_task", "strategic_intent", "boundaries", "task_type", "relevant_principles"]},
+    "capability_status": {"enum": ["verified", "unverified", "unsupported", "unobservable"]}
+  }
+}

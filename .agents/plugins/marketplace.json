@@ -1,0 +1,10 @@
+{
+  "name": "raw-to-release-local",
+  "interface": {"displayName": "Raw to Release Local"},
+  "plugins": [{
+    "name": "raw-to-release",
+    "source": {"source": "local", "path": "./plugins/raw-to-release"},
+    "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+    "category": "Productivity"
+  }]
+}

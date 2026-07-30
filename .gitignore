@@ -1,4 +1,6 @@
 __pycache__/
+.raw-to-release/runtime/
+node_modules/
 *.py[cod]
 .pytest_cache/
 *.egg-info/

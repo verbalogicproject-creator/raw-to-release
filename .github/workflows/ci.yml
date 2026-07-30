@@ -1,0 +1,23 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    strategy:
+      matrix: {os: [ubuntu-latest, macos-latest, windows-latest], python: ['3.11']}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: ${{ matrix.python }}}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22', cache: npm}
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - run: npm run check:bundle
+      - run: npm run check:schemas
+      - run: npm test
+      - run: npm run check:supply-chain -- --check
+      - run: python scripts/sync_method.py --check
+      - run: python scripts/validate_repository.py
+      - run: python -m unittest discover -s tests -v
+      - run: python -m unittest discover -s examples/pocket-tasks/tests -v

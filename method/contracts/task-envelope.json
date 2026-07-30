@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw-to-release.dev/contracts/2/task-envelope.json",
+  "type": "object",
+  "required": ["contract_version", "objective", "context_and_inputs", "scope", "constraints", "authority", "deliverable", "acceptance_evidence", "budget", "escalate_when"],
+  "properties": {
+    "contract_version": {"$ref": "common.json#/$defs/contract_version"},
+    "objective": {"type": "string", "minLength": 1},
+    "context_and_inputs": {"type": "array", "items": {"type": "string"}},
+    "scope": {"type": "object", "required": ["included", "excluded"], "additionalProperties": false, "properties": {"included": {"type": "array", "minItems": 1, "items": {"type": "string"}}, "excluded": {"type": "array", "items": {"type": "string"}}}},
+    "constraints": {"type": "array", "items": {"type": "string"}},
+    "authority": {"type": "object", "required": ["allowed_tools", "forbidden_tools", "allowed_effects", "requires_approval"], "additionalProperties": false, "properties": {"allowed_tools": {"type": "array", "items": {"type": "string"}}, "forbidden_tools": {"type": "array", "items": {"type": "string"}}, "allowed_effects": {"type": "array", "items": {"type": "string"}}, "requires_approval": {"type": "array", "items": {"type": "string"}}}},
+    "deliverable": {"type": "string", "minLength": 1},
+    "acceptance_evidence": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "common.json#/$defs/identifier"}},
+    "budget": {"type": "object", "required": ["delegations", "concurrent_agents", "implementation_tasks", "fix_review_cycles", "retries", "token_enforcement", "monetary_enforcement"], "additionalProperties": false, "properties": {"delegations": {"type": "integer", "minimum": 0, "maximum": 12}, "concurrent_agents": {"type": "integer", "minimum": 0, "maximum": 3}, "implementation_tasks": {"type": "integer", "minimum": 0, "maximum": 8}, "fix_review_cycles": {"type": "integer", "minimum": 0, "maximum": 2}, "retries": {"type": "integer", "minimum": 0, "maximum": 1}, "token_enforcement": {"const": "unobservable"}, "monetary_enforcement": {"const": "unobservable"}}},
+    "escalate_when": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}
