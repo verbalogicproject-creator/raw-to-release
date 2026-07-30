@@ -2,16 +2,22 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw-to-release.dev/contracts/2/approval-receipt.json",
   "type": "object",
-  "required": ["contract_version", "receipt_type", "user", "revision", "displayed_content_hash", "confirmed_at", "target"],
+  "required": ["contract_version", "receipt_type", "receipt_id", "run_id", "user", "revision", "displayed_content_hash", "confirmed_at", "target"],
   "additionalProperties": false,
   "properties": {
     "contract_version": {"$ref": "common.json#/$defs/contract_version"},
-    "receipt_type": {"enum": ["intent", "plan", "authority-revision"]},
+    "receipt_type": {"enum": ["intent", "plan", "authority-revision", "plan-rejection"]},
+    "receipt_id": {"$ref": "common.json#/$defs/identifier"},
+    "run_id": {"$ref": "common.json#/$defs/run_id"},
     "user": {"type": "string", "minLength": 1},
     "revision": {"type": "integer", "minimum": 1},
     "displayed_content_hash": {"$ref": "common.json#/$defs/sha256"},
     "authority_hash": {"$ref": "common.json#/$defs/sha256"},
     "confirmed_at": {"$ref": "common.json#/$defs/timestamp"},
-    "target": {"type": "string", "minLength": 1}
+    "target": {"type": "string", "minLength": 1},
+    "reason": {"type": "string", "minLength": 1},
+    "rejected_at": {"$ref": "common.json#/$defs/timestamp"},
+    "rejected_authority_hash": {"$ref": "common.json#/$defs/sha256"},
+    "prior_authority_hash": {"$ref": "common.json#/$defs/sha256"}
   }
 }

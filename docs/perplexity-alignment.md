@@ -156,7 +156,7 @@ until a fresh independent reviewer evaluates the committed repaired candidate.
 
 Passing at this pause point:
 
-- 33 Node tests, including six positive/negative contract-2 pairs and runtime
+- 34 Node tests, including six positive/negative contract-2 pairs and runtime
   integration tests for preflight, locking, immutable approvals, authority
   drift, dependency rejection, shell-free execution, receipt derivation,
   redaction, identity separation, stale review, unsafe paths, corrupt logs, and
@@ -172,7 +172,7 @@ Passing at this pause point:
 - repository/plugin validation passes; and
 - offline supply-chain inspection passes with zero runtime package imports and
   bundle SHA-256
-  `77fbd20f2497462ceb095a301024acb86cad6dd0278d7e317d2f545b2cd3cecd`.
+  `e11001612cb2a66bf926b5595cf84bf7e51981c74fc0aa9af94219e8593f6a50`.
 
 ## Important resolved finding
 
@@ -185,6 +185,17 @@ regenerated; schema compilation and the complete local test suite pass; and
 build/test dependency and is not shipped in the runtime bundle.
 
 ## Important unresolved findings
+
+### Native capability block
+
+The final hardening cycle established that the bundled child process has no
+authenticated native channel for host-observed delegation identity or active
+host effect approval. A caller flag or model-authored file would only be another
+claim. Accordingly, `preflight` and `handoff prepare` now exit 4 instead of
+accepting self-asserted capability. This is the deliberate fail-closed outcome:
+the current native surface cannot produce `release_ready`, even when all local
+source tests pass. Perplexity should treat a future authenticated Codex host
+capability as a prerequisite, not recommend an MCP/service/hook workaround.
 
 ### Empirical qualification
 

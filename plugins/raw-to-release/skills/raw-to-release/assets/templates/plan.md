@@ -1,13 +1,17 @@
 # Approved plan
 
-## Scope and exclusions
+## Scope
 
-## Architecture and affected areas
+## Architecture
 
-## Tasks and Dot justifications
+## Affected areas
 
-## Tests and acceptance evidence
+## Tests
 
 ## Risks
+
+## Exclusions
+
+## Task authorities
 
 Approval observer / time:

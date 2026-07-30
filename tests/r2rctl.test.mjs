@@ -70,7 +70,7 @@ test('help exposes the version, complete command surface, and exit contract', ()
 test('preflight fails closed for dirty worktrees and unobservable delegation IDs', () => {
   const root = repository();
   let result = cli(root, 'preflight'); assert.equal(result.status, 4); assert.match(result.stderr, /identities are unobservable/);
-  result = cli(root, 'preflight', '--delegation-ids', 'observable'); assert.equal(result.status, 0, result.stderr);
+  result = cli(root, 'preflight', '--delegation-ids', 'observable'); assert.equal(result.status, 4); assert.match(result.stderr, /unobservable/);
   writeFileSync(join(root, 'dirty.txt'), 'dirty');
   result = cli(root, 'preflight', '--delegation-ids', 'observable'); assert.equal(result.status, 3); assert.match(result.stderr, /dirty/);
 });
@@ -234,6 +234,16 @@ test('protected command classes are denied before spawn', () => {
   assert.equal(result.status, 3); assert.match(result.stderr, /protected|forbidden/);
 });
 
+test('protected effects cannot be hidden in absolute paths or interpreter payloads', () => {
+  for (const argv of [['/usr/bin/curl', 'https://example.invalid'], [process.execPath, '-e', "require('node:child_process').execFileSync('git',['push'])"]]) {
+    const root = repository(); init(root); confirmIntent(root);
+    const authority = { task_id: 'task-1', allowed_tools: ['node'], forbidden_tools: [], commands: [{ command_id: 'tests', argv, cwd: '.', kind: 'test' }] };
+    const approved = writePlan(root, { tasks: [authority] }); const task = { contract_version: '2.0.0', task_id: 'task-1', delegation_id: 'impl-1', tester_delegation_id: 'tester-1', approved_authority_hash: approved.authority_hash, task_authority_hash: hash(authority), dependencies: [], allowed_tools: authority.allowed_tools, forbidden_tools: [], commands: authority.commands, acceptance_evidence: ['tests'] };
+    writeFileSync(join(root, 'task.json'), JSON.stringify(task)); ok(cli(root, 'task', 'register', '--run', RUN, '--id', 'task-1', '--file', 'task.json')); ok(cli(root, 'task', 'start', '--run', RUN, '--id', 'task-1'));
+    const result = cli(root, 'evidence', 'exec', '--run', RUN, '--task', 'task-1', '--command', 'tests'); assert.equal(result.status, 3); assert.match(result.stderr, /host approval capability/);
+  }
+});
+
 test('plan rejection invalidates affected Dots until exact reconfirmation', () => {
   const root = repository(); init(root); confirmIntent(root); writePlan(root);
   ok(cli(root, 'plan', 'reject', '--run', RUN, '--user', 'human-1', '--reason', 'boundary changed', '--dots', 'boundaries'));
@@ -258,7 +268,7 @@ test('latest-attempt policy requires retry and refuses pass overwrite', () => {
 });
 
 test('non-init traversal and nested-symlink cwd fail closed', () => {
-  const root = repository(); assert.equal(cli(root, 'validate', '--run', '../escape').status, 2);
+  const root = repository(); assert.equal(cli(root, 'validate', '--run', '../escape').status, 2); assert.equal(cli(root, 'validate', '--run', '..\\escape').status, 2); assert.equal(cli(root, 'validate', '--run', 'C:\\escape').status, 2);
   init(root); confirmIntent(root); const outside = mkdtempSync(join(tmpdir(), 'r2r-outside-')); symlinkSync(outside, join(root, 'linked-dir'));
   const authority = { task_id: 'task-1', allowed_tools: ['node'], forbidden_tools: [], commands: [{ command_id: 'tests', argv: [process.execPath, '-e', "console.log('1 passed')"], cwd: 'linked-dir', kind: 'test' }] };
   const approved = writePlan(root, { tasks: [authority] }); const task = { contract_version: '2.0.0', task_id: 'task-1', delegation_id: 'impl-1', tester_delegation_id: 'tester-1', approved_authority_hash: approved.authority_hash, task_authority_hash: hash(authority), dependencies: [], allowed_tools: authority.allowed_tools, forbidden_tools: [], commands: authority.commands, acceptance_evidence: ['tests'] };

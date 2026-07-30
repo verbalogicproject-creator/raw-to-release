@@ -87,6 +87,16 @@ const runRoot = (required = true) => {
 };
 const runtimeRoot = () => join(r2rRoot(), 'runtime', runId());
 
+function rejectSymlinkComponents(path, boundary = root) {
+  const rel = relative(boundary, path);
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) fail('path escapes its authority boundary', EXIT.invalid);
+  let cursor = boundary;
+  for (const part of rel.split(sep).filter(Boolean)) {
+    cursor = join(cursor, part);
+    if (existsSync(cursor) && lstatSync(cursor).isSymbolicLink()) fail(`path contains a symlink: ${relative(root, cursor)}`, EXIT.invalid);
+  }
+}
+
 function git(args, { allowFailure = false, nul = false } = {}) {
   const result = spawnSync('git', ['-C', root, ...args], { encoding: nul ? 'buffer' : 'utf8', windowsHide: true });
   if (result.error?.code === 'ENOENT') fail('Git is unavailable', EXIT.unavailable);
@@ -110,7 +120,7 @@ function ensureRoot() {
 function safeRelative(path, { mustExist = true } = {}) {
   if (typeof path !== 'string' || path === '' || isAbsolute(path)) fail(`unsafe repository-relative path: ${path}`, EXIT.invalid);
   const normalized = path.replaceAll('\\', '/');
-  if (normalized.split('/').includes('..') || normalized.startsWith('/')) fail(`path escapes repository: ${path}`, EXIT.invalid);
+  if (normalized.split('/').includes('..') || normalized.startsWith('/') || normalized.startsWith('//') || /^[a-z]:/i.test(normalized)) fail(`path escapes repository: ${path}`, EXIT.invalid);
   const target = resolve(root, normalized);
   const rel = relative(root, target);
   if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) fail(`path escapes repository: ${path}`, EXIT.invalid);
@@ -128,9 +138,10 @@ function safeRelative(path, { mustExist = true } = {}) {
 
 function safeDirectory(path) {
   if (path === '.') return root;
-  if (typeof path !== 'string' || path === '' || isAbsolute(path) || path.replaceAll('\\', '/').split('/').includes('..')) fail(`directory escapes repository: ${path}`, EXIT.invalid);
+  const normalized = typeof path === 'string' ? path.replaceAll('\\', '/') : path;
+  if (typeof path !== 'string' || path === '' || isAbsolute(path) || normalized.split('/').includes('..') || normalized.startsWith('/') || normalized.startsWith('//') || /^[a-z]:/i.test(normalized)) fail(`directory escapes repository: ${path}`, EXIT.invalid);
   let cursor = root;
-  for (const part of path.replaceAll('\\', '/').split('/')) {
+  for (const part of normalized.split('/')) {
     cursor = join(cursor, part);
     if (!existsSync(cursor)) fail(`missing directory: ${path}`, EXIT.invalid);
     if (lstatSync(cursor).isSymbolicLink()) fail(`directory contains a symlink: ${path}`, EXIT.invalid);
@@ -157,7 +168,7 @@ function atomicWrite(path, content) {
 }
 
 function acquireLock() {
-  const path = join(runtimeRoot(), 'r2rctl.lock'); mkdirSync(dirname(path), { recursive: true });
+  const path = join(runtimeRoot(), 'r2rctl.lock'); rejectSymlinkComponents(dirname(path)); mkdirSync(dirname(path), { recursive: true }); rejectSymlinkComponents(dirname(path));
   try { return { path, fd: openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600) }; }
   catch (error) { if (error.code === 'EEXIST') fail('run is locked by another operation', EXIT.blocked); throw error; }
 }
@@ -205,6 +216,7 @@ function transaction(path, changes, eventType, eventData = {}) {
   const nextGeneration = current.generation + 1;
   const stage = join(path, '.staging', `${nextGeneration}-${randomUUID()}`);
   const generation = generationRoot(path, nextGeneration);
+  rejectSymlinkComponents(join(path, '.staging'), path); rejectSymlinkComponents(join(path, 'generations'), path);
   mkdirSync(stage, { recursive: true });
   // Re-materialize the complete immutable generation.  The only live pointer is
   // run-manifest.json, swapped after this directory has been durably renamed.
@@ -214,7 +226,7 @@ function transaction(path, changes, eventType, eventData = {}) {
     files[name] = expected;
   }
   for (const [name, value] of all) {
-    if (name === 'run-manifest.json' || isAbsolute(name) || name.split('/').includes('..')) fail(`unsafe authoritative record name: ${name}`);
+    if (name === 'run-manifest.json' || isAbsolute(name) || name.includes('\\') || name.split('/').includes('..') || name.startsWith('/') || /^[a-z]:/i.test(name)) fail(`unsafe authoritative record name: ${name}`);
     const content = typeof value === 'string' ? value.replaceAll('\r\n', '\n') : `${canonical(value)}\n`;
     atomicWrite(join(stage, name), content);
     files[name] = { sha256: sha256(content), bytes: Buffer.byteLength(content), type: 'regular' };
@@ -251,12 +263,13 @@ function markdownSections(text, headings, label) {
   }
 }
 function receiptName(kind, id) { return `receipts/${kind}-${id}.json`; }
+function receiptId(kind) { return `${kind}-${randomUUID()}`; }
 
 function preflight() {
   ensureRoot();
   const nodeMajor = Number(process.versions.node.split('.')[0]);
   if (nodeMajor < 22) fail(`Node 22 or newer is required; found ${process.versions.node}`, EXIT.unavailable);
-  const identityVisibility = String(cli.get('delegation-ids') || 'unobservable');
+  const identityVisibility = 'unobservable';
   const capabilities = {
     contract_version: CONTRACT, node: process.versions.node, git: gitText('--version'),
     repository: '.', branch: gitText('branch', '--show-current'), sha: gitText('rev-parse', 'HEAD'),
@@ -264,8 +277,7 @@ function preflight() {
     protected_effects: 'host-controlled',
   };
   if (!capabilities.clean) fail('existing repository worktree is dirty', EXIT.blocked);
-  if (identityVisibility !== 'observable') fail('durable delegated-agent identities are unobservable', EXIT.unavailable);
-  output(capabilities);
+  fail('durable delegated-agent identities are unobservable; host effect approval is also unobservable', EXIT.unavailable);
 }
 
 function runInit() {
@@ -308,13 +320,13 @@ function intentConfirm() {
     const proposal = loadRecord(`proposals/${dot}-r${revision}.json`);
     if (proposal.content_hash !== displayedHash || current.dots[dot]?.content_hash !== displayedHash || current.dots[dot]?.revision !== revision) fail('confirmation does not match the displayed immutable proposal', EXIT.blocked);
     if (current.dots[dot].confirmed) fail('Dot revision is already confirmed', EXIT.blocked);
-    const confirmedAt = isoNow(); const receipt = { contract_version: CONTRACT, receipt_type: 'intent', user, revision, displayed_content_hash: displayedHash, confirmed_at: confirmedAt, target: `${dot}-r${revision}` };
+    const confirmedAt = isoNow(); const receipt = { contract_version: CONTRACT, receipt_type: 'intent', receipt_id: receiptId('approval-intent', { dot, revision, displayedHash }), run_id: runId(), user, revision, displayed_content_hash: displayedHash, confirmed_at: confirmedAt, target: `${dot}-r${revision}` };
     const dots = { ...current.dots, [dot]: { ...current.dots[dot], confirmed: true, confirmed_at: confirmedAt } };
     const allConfirmed = DOTS.every((name) => dots[name]?.confirmed);
     let nextIntent = { ...current, dots, confirmation_state: allConfirmed ? 'confirmed' : 'draft' };
     nextIntent = { ...nextIntent, intent_hash: sha256(DOTS.map((name) => dots[name])) };
     let nextState = state(); if (allConfirmed && nextState.state === 'intake') nextState = transition(nextState, 'intent_confirmed');
-    transaction(path, { 'intent.json': nextIntent, 'run-state.json': nextState, [receiptName('approval-intent', `${dot}-r${revision}`)]: receipt }, 'intent.confirm', { dot, revision, displayedHash });
+    transaction(path, { 'intent.json': nextIntent, 'run-state.json': nextState, [receiptName('approval-intent', `${dot}-r${revision}-${receipt.receipt_id}`)]: receipt }, 'intent.confirm', { dot, revision, displayedHash, receipt_id: receipt.receipt_id });
     output({ dot, revision, confirmed: true, intent_hash: nextIntent.intent_hash });
   });
 }
@@ -330,8 +342,8 @@ function planApprove() {
     const intent = loadRecord('intent.json'); if (intent.confirmation_state !== 'confirmed') fail('all five Dots must be confirmed', EXIT.blocked);
     let nextState = state(); if (nextState.state !== 'intent_confirmed') fail('plan approval is not allowed in the current state', EXIT.blocked);
     nextState = transition(transition(nextState, 'planned'), 'approved'); nextState.authority_hash = authorityHash;
-    const receipt = { contract_version: CONTRACT, receipt_type: 'plan', user, revision: 1, displayed_content_hash: planHash, authority_hash: authorityHash, confirmed_at: isoNow(), target: 'plan.md' };
-    transaction(path, { 'plan.md': text, 'task-authorities.json': authorities, 'run-state.json': nextState, [receiptName('approval-plan', planHash.slice(0, 16))]: receipt }, 'plan.approve', { plan_hash: planHash, authority_hash: authorityHash });
+    const receipt = { contract_version: CONTRACT, receipt_type: 'plan', receipt_id: receiptId('approval-plan', { planHash, authorityHash }), run_id: runId(), user, revision: 1, displayed_content_hash: planHash, authority_hash: authorityHash, confirmed_at: isoNow(), target: 'plan.md' };
+    transaction(path, { 'plan.md': text, 'task-authorities.json': authorities, 'run-state.json': nextState, [receiptName('approval-plan', receipt.receipt_id)]: receipt }, 'plan.approve', { plan_hash: planHash, authority_hash: authorityHash, receipt_id: receipt.receipt_id });
     output({ plan_hash: planHash, authority_hash: authorityHash, state: nextState.state });
   });
 }
@@ -349,8 +361,8 @@ function planReject() {
     const dots = { ...intent.dots };
     for (const dot of affected) dots[dot] = { ...dots[dot], confirmed: false, confirmed_at: null };
     const nextIntent = { ...intent, dots, confirmation_state: 'draft', intent_hash: sha256(DOTS.map((dot) => dots[dot])) };
-    const receipt = { contract_version: CONTRACT, receipt_type: 'plan-rejection', user, reason, rejected_at: isoNow(), target: 'plan.md', rejected_authority_hash: current.authority_hash };
-    transaction(path, { 'intent.json': nextIntent, 'run-state.json': next, [receiptName('approval-plan-rejection', sha256(receipt).slice(0, 16))]: receipt }, 'plan.reject', { user, reason, affected_dots: affected, rejected_authority_hash: current.authority_hash });
+    const rejectedAt = isoNow(); const receipt = { contract_version: CONTRACT, receipt_type: 'plan-rejection', receipt_id: receiptId('approval-plan-rejection', { current: current.authority_hash, affected, reason }), run_id: runId(), user, revision: 1, displayed_content_hash: sha256(readFileSync(recordPath(path, 'plan.md'))), authority_hash: current.authority_hash, confirmed_at: rejectedAt, reason, rejected_at: rejectedAt, target: 'plan.md', rejected_authority_hash: current.authority_hash };
+    transaction(path, { 'intent.json': nextIntent, 'run-state.json': next, [receiptName('approval-plan-rejection', receipt.receipt_id)]: receipt }, 'plan.reject', { user, reason, affected_dots: affected, rejected_authority_hash: current.authority_hash, receipt_id: receipt.receipt_id });
     output({ rejected: true, affected_dots: affected, state: next.state });
   });
 }
@@ -384,10 +396,26 @@ function commandReceipts(path, taskId, commandId) {
     .sort((left, right) => left.attempt - right.attempt || left.ended_at.localeCompare(right.ended_at));
 }
 
+function protectedCommand(argv, forbidden = []) {
+  const words = argv.map((value) => String(value).toLowerCase());
+  const bases = words.map((word) => word.replaceAll('\\', '/').split('/').at(-1));
+  const narrative = words.join(' ');
+  // argv is the authority boundary, but interpreter payloads are executable
+  // too.  Reject the protected effect wherever it is carried, including an
+  // absolute executable path, a shell wrapper, or a Node/Python -e payload.
+  const protectedEffect = /(^|[\s;|&])(?:git\s+push|(?:npm|pnpm|yarn)\s+(?:add|install|publish)|(?:curl|wget|ssh|scp|ftp|telnet)\b|(?:rm|rmdir)\b|(?:deploy|publish)\b)/;
+  if (protectedEffect.test(narrative)) return true;
+  if (bases.some((base) => ['curl', 'wget', 'ssh', 'scp', 'ftp', 'telnet', 'rm', 'rmdir'].includes(base))) return true;
+  if (['node', 'node.exe', 'python', 'python3', 'python.exe', 'sh', 'bash', 'cmd', 'cmd.exe', 'powershell', 'pwsh'].includes(bases[0]) && /(?:git.{0,80}push|(?:npm|pnpm|yarn).{0,80}(?:install|publish)|curl|wget|ssh|scp|\brm\b|deploy|publish)/.test(narrative)) return true;
+  return forbidden.some((effect) => narrative.includes(String(effect).toLowerCase()));
+}
+
 function taskCommand(action) {
-  const path = runRoot(); const id = String(cli.get('id', action !== 'register')); let tasks = loadTasks();
+  const path = runRoot(); const id = String(cli.get('id', action !== 'register'));
   locked(() => {
+    let tasks = loadTasks();
     let nextState = state();
+    let fallbackChanges = null; let fallbackEvent = {}; let revisedAuthorities = null;
     if (action === 'register') {
       if (!['approved', 'implementing'].includes(nextState.state) || !nextState.authority_hash) fail('task registration requires an approved sealed plan', EXIT.blocked);
       const file = safeRelative(String(cli.get('file', true))); const task = json(file); assertV2(task, 'task');
@@ -420,14 +448,19 @@ function taskCommand(action) {
           const authorityFile = safeRelative(String(cli.get('authority-file', true))); const user = String(cli.get('user', true));
           const revised = json(authorityFile); const authority = revised.tasks?.find((entry) => entry.task_id === id);
           if (!authority || !Array.isArray(authority.commands) || !Array.isArray(authority.allowed_tools) || !Array.isArray(authority.forbidden_tools)) fail('fallback requires a complete revised authority entry');
+          const sealed = loadRecord('task-authorities.json');
+          const sealedIds = (sealed.tasks || []).map((entry) => entry.task_id).sort(); const revisedIds = (revised.tasks || []).map((entry) => entry.task_id).sort();
+          if (canonical(sealedIds) !== canonical(revisedIds) || new Set(revisedIds).size !== revisedIds.length) fail('fallback authority revision must revise the complete sealed task set without adding or removing tasks', EXIT.blocked);
           const priorHash = nextState.authority_hash; const revisedHash = sha256(revised);
           if (revisedHash === priorHash) fail('fallback authority revision must change the sealed set', EXIT.blocked);
           task.approved_authority_hash = revisedHash; task.task_authority_hash = sha256(authority);
           task.commands = authority.commands; task.allowed_tools = authority.allowed_tools; task.forbidden_tools = authority.forbidden_tools;
           nextState = { ...nextState, authority_hash: revisedHash, counters: { ...nextState.counters, delegations: nextState.counters.delegations + 1 } };
           if (nextState.counters.delegations > LIMITS.delegations) fail('delegation limit exhausted', EXIT.blocked);
-          const approval = { contract_version: CONTRACT, receipt_type: 'authority-revision', user, revision: nextState.counters.delegations, displayed_content_hash: revisedHash, authority_hash: revisedHash, prior_authority_hash: priorHash, confirmed_at: isoNow(), target: 'task-authorities.json' };
-          transaction(path, { 'task-authorities.json': revised, [receiptName('approval-authority', sha256(approval).slice(0, 16))]: approval }, 'authority.revise', { task_id: id, prior_authority_hash: priorHash, authority_hash: revisedHash });
+          const approval = { contract_version: CONTRACT, receipt_type: 'authority-revision', receipt_id: receiptId('approval-authority', { priorHash, revisedHash }), run_id: runId(), user, revision: nextState.counters.delegations, displayed_content_hash: revisedHash, authority_hash: revisedHash, prior_authority_hash: priorHash, confirmed_at: isoNow(), target: 'task-authorities.json' };
+          fallbackChanges = { 'task-authorities.json': revised, [receiptName('approval-authority', approval.receipt_id)]: approval };
+          fallbackEvent = { prior_authority_hash: priorHash, authority_hash: revisedHash, authority_revision_receipt: approval.receipt_id };
+          revisedAuthorities = new Map(revised.tasks.map((entry) => [entry.task_id, entry]));
         }
         task.last_recovery = action; task.last_recovery_at = isoNow();
       } else {
@@ -437,9 +470,13 @@ function taskCommand(action) {
         if (receipts.some((receipt) => receipt.outcome !== 'pass')) fail('task completion evidence is not passing', EXIT.blocked);
         task.status = 'complete'; task.completed_at = isoNow(); task.evidence_hashes = receipts.map((receipt) => sha256(receipt));
       }
-      const copy = [...tasks.tasks]; copy[index] = task; tasks = { ...tasks, tasks: copy };
+      let copy = revisedAuthorities ? tasks.tasks.map((item) => {
+        const entry = revisedAuthorities.get(item.task_id);
+        return { ...item, approved_authority_hash: nextState.authority_hash, task_authority_hash: sha256(entry), commands: entry.commands, allowed_tools: entry.allowed_tools, forbidden_tools: entry.forbidden_tools };
+      }) : [...tasks.tasks];
+      copy[index] = task; tasks = { ...tasks, tasks: copy };
     }
-    transaction(path, { 'tasks.json': tasks, 'run-state.json': nextState }, `task.${action}`, { task_id: action === 'register' ? cli.get('id') : id });
+    transaction(path, { 'tasks.json': tasks, 'run-state.json': nextState, ...(fallbackChanges || {}) }, `task.${action}`, { task_id: action === 'register' ? cli.get('id') : id, ...fallbackEvent });
     output({ task_id: action === 'register' ? cli.get('id') : id, status: tasks.tasks.find((item) => item.task_id === (action === 'register' ? cli.get('id') : id)).status });
   });
 }
@@ -458,10 +495,13 @@ function reviewRepair() {
 
 function evidenceExec() {
   const path = runRoot(); const taskId = String(cli.get('task', true)); const commandId = String(cli.get('command', true));
+  // The reservation is the run lock itself: retain it from authoritative-state
+  // lookup through receipt commit.  A killed process leaves the O_EXCL marker,
+  // deliberately blocking recovery rather than permitting duplicate execution.
+  return locked(() => {
   const tasks = loadTasks(); const task = tasks.tasks.find((item) => item.task_id === taskId); if (!task || task.status !== 'started') fail('evidence command requires a started task', EXIT.blocked);
   const approved = task.commands.find((command) => command.command_id === commandId); if (!approved || !Array.isArray(approved.argv) || approved.argv.length === 0) fail('command is not in the approved argv set', EXIT.blocked);
-  const commandText = approved.argv.join(' ').toLowerCase();
-  if (/(^|\s)(?:git\s+push|npm\s+(?:install|publish)|pnpm\s+(?:install|publish)|yarn\s+(?:add|install|publish)|curl|wget|ssh|scp|rm|rmdir|deploy)(?:\s|$)/.test(commandText) || (task.forbidden_tools || []).some((effect) => commandText.includes(String(effect).toLowerCase()))) fail('protected, destructive, install, network, or forbidden command denied without immutable host approval', EXIT.blocked);
+  if (protectedCommand(approved.argv, task.forbidden_tools || [])) fail('protected, destructive, install, network, or forbidden command denied: no active host approval capability is observable', EXIT.blocked);
   if (cli.flags.has('--')) fail('evidence exec does not accept narrated or replacement argv', EXIT.blocked);
   const cwd = approved.cwd || '.'; const cwdPath = safeDirectory(cwd);
   const priorReceipts = commandReceipts(path, taskId, commandId); const latest = priorReceipts.at(-1);
@@ -485,13 +525,15 @@ function evidenceExec() {
     outcome: result.status === 0 && gitText('rev-parse', 'HEAD') === implementationSha && gitText('status', '--porcelain=v1', '-z', '--untracked-files=all') === statusBefore ? 'pass' : 'fail', test_counts: counts,
     stdout_sha256: sha256(stdout), stderr_sha256: sha256(stderr), failure_excerpt: excerpt,
   };
-  locked(() => transaction(path, { [receiptName('command', receiptId)]: receipt }, 'evidence.exec', { receipt_id: receiptId, outcome: receipt.outcome, exit_code: receipt.exit_code }));
+  transaction(path, { [receiptName('command', receiptId)]: receipt }, 'evidence.exec', { receipt_id: receiptId, outcome: receipt.outcome, exit_code: receipt.exit_code, task_id: taskId, command_id: commandId });
   output({ receipt: receiptName('command', receiptId), ...receipt });
   if (receipt.outcome !== 'pass') process.exitCode = EXIT.internal;
+  });
 }
 
 function reviewRecord() {
   const path = runRoot(); const file = safeRelative(String(cli.get('file', true))); const review = json(file); assertV2(review, 'review');
+  return locked(() => {
   const required = ['implementer_delegation_ids', 'tester_delegation_id', 'reviewer_delegation_id', 'reviewed_sha', 'input_hashes', 'verdict', 'evidence_ids', 'findings'];
   if (required.some((key) => review[key] === undefined)) fail('review receipt is incomplete');
   const identities = [...review.implementer_delegation_ids, review.tester_delegation_id, review.reviewer_delegation_id];
@@ -503,14 +545,18 @@ function reviewRecord() {
   if (canonical([...review.implementer_delegation_ids].sort()) !== canonical(implementers)) fail('review implementer identities do not match registered task provenance', EXIT.blocked);
   const testers = [...new Set(receipts.map((item) => item.tester_delegation_id))];
   if (testers.length !== 1 || testers[0] !== review.tester_delegation_id) fail('review tester identity does not match command receipt provenance', EXIT.blocked);
-  const expectedInputs = { plan: sha256(readFileSync(recordPath(path, 'plan.md'))), tasks: sha256(loadRecord('tasks.json')) };
+  const runState = state();
+  const rules = existsSync(join(root, 'AGENTS.md')) ? readFileSync(join(root, 'AGENTS.md')) : Buffer.from('');
+  const implementationDiff = git(['diff', '--binary', `${runState.base_sha}..${review.reviewed_sha}`]).stdout;
+  const expectedInputs = { intent: sha256(loadRecord('intent.json')), plan: sha256(readFileSync(recordPath(path, 'plan.md'))), authorities: sha256(loadRecord('task-authorities.json')), tasks: sha256(loadRecord('tasks.json')), rules: sha256(rules), implementation_diff: sha256(implementationDiff) };
   for (const receipt of receipts) expectedInputs[`receipt:${receipt.receipt_id}`] = sha256(receipt);
   if (canonical(review.input_hashes) !== canonical(expectedInputs)) fail('review input hashes do not match authoritative inputs and evidence', EXIT.blocked);
   if (canonical([...review.evidence_ids].sort()) !== canonical(receipts.map((item) => item.receipt_id).sort())) fail('review evidence IDs do not match command receipts', EXIT.blocked);
   if (review.verdict === 'pass' && review.findings.some((finding) => finding.severity === 'P0' || finding.severity === 'P1')) fail('PASS review cannot contain P0 or P1 findings', EXIT.blocked);
-  const receipt = { ...review, receipt_type: 'review', run_id: runId(), recorded_at: isoNow(), receipt_id: sha256(review).slice(0, 24) };
-  locked(() => transaction(path, { [receiptName('review', receipt.receipt_id)]: receipt, 'review.json': receipt }, 'review.record', { receipt_id: receipt.receipt_id, verdict: receipt.verdict }));
+  const receipt = { ...review, receipt_type: 'review', run_id: runId(), recorded_at: isoNow(), receipt_id: receiptId('review') };
+  transaction(path, { [receiptName('review', receipt.receipt_id)]: receipt, 'review.json': receipt }, 'review.record', { receipt_id: receipt.receipt_id, verdict: receipt.verdict, run_id: runId(), reviewed_sha: receipt.reviewed_sha });
   output(receipt); if (receipt.verdict !== 'pass') process.exitCode = EXIT.internal;
+  });
 }
 
 function prepareArtifacts() {
@@ -528,6 +574,7 @@ function prepareArtifacts() {
 function handoffPrepare() {
   const path = runRoot(); const residual = String(cli.get('residual-risk') || 'None recorded.');
   locked(() => {
+    fail('release readiness is unavailable: native host identity and effect-approval attestation are unobservable', EXIT.unavailable);
     let nextState = state(); const tasks = loadTasks();
     if (nextState.state !== 'implementing' || tasks.tasks.length === 0 || tasks.tasks.some((task) => task.status !== 'complete')) fail('handoff requires all approved tasks complete', EXIT.blocked);
     const review = loadRecord('review.json'); if (review.verdict !== 'pass') fail('handoff requires passing independent review', EXIT.blocked);
@@ -546,7 +593,8 @@ function handoffPrepare() {
 function validateManifest(path, { rejectOrphans = false } = {}) {
   const value = manifest(path); assertV2(value, 'run manifest');
   if (!Number.isInteger(value.generation) || value.generation < 1) fail('invalid manifest generation', EXIT.invalid);
-  const active = generationRoot(path, value.generation);
+  rejectSymlinkComponents(join(path, 'generations'), path); rejectSymlinkComponents(join(path, '.staging'), path);
+  const active = generationRoot(path, value.generation); rejectSymlinkComponents(active, path);
   if (!existsSync(active) || lstatSync(active).isSymbolicLink() || !statSync(active).isDirectory()) fail('missing active generation', EXIT.invalid);
   if (rejectOrphans) {
     const staging = join(path, '.staging');
@@ -612,8 +660,9 @@ function validateRun() {
   for (const dot of DOTS) {
     const item = intent.dots[dot]; const proposal = loadRecord(`proposals/${dot}-r${item.revision}.json`);
     if (proposal.run_id !== runId() || proposal.content_hash !== item.content_hash || proposal.value !== item.value) fail(`intent proposal cross-link mismatch: ${dot}`, EXIT.invalid);
-    const approval = Object.keys(authoritative.files).filter((name) => name.startsWith(`receipts/approval-intent-${dot}-r${item.revision}`)).map((name) => loadRecord(name));
-    if (approval.length !== 1 || approval[0].displayed_content_hash !== item.content_hash) fail(`intent approval membership mismatch: ${dot}`, EXIT.invalid);
+    const event = [...log].reverse().find((entry) => entry.type === 'intent.confirm' && entry.data.dot === dot && entry.data.revision === item.revision);
+    const approval = Object.keys(authoritative.files).filter((name) => name.startsWith(`receipts/approval-intent-${dot}-r${item.revision}`)).map((name) => loadRecord(name)).find((receipt) => receipt.receipt_id === event?.data.receipt_id);
+    if (!approval || approval.run_id !== runId() || approval.displayed_content_hash !== item.content_hash) fail(`intent approval membership mismatch: ${dot}`, EXIT.invalid);
   }
   const tasks = loadTasks(); assertV2(tasks, 'tasks'); assertDag(tasks.tasks);
   rebuilt.counters.delegations = new Set(tasks.tasks.map((task) => task.delegation_id)).size + log.filter((event) => event.type === 'authority.revise').length;
@@ -627,7 +676,8 @@ function validateRun() {
   if (['approved', 'implementing', 'verifying', 'release_ready'].includes(runState.state)) {
     const plan = readFileSync(recordPath(path, 'plan.md'), 'utf8'); const planHash = sha256(plan); const authorities = loadRecord('task-authorities.json');
     const approvals = Object.keys(authoritative.files).filter((name) => name.startsWith('receipts/approval-plan-') && !name.includes('rejection')).map((name) => loadRecord(name));
-    const matching = approvals.filter((receipt) => receipt.receipt_type === 'plan' && receipt.displayed_content_hash === planHash && receipt.authority_hash === sha256(authorities));
+    const planEvent = [...log].reverse().find((event) => event.type === 'plan.approve');
+    const matching = approvals.filter((receipt) => receipt.receipt_id === planEvent?.data.receipt_id && receipt.run_id === runId() && receipt.receipt_type === 'plan' && receipt.displayed_content_hash === planHash && receipt.authority_hash === sha256(authorities));
     if (matching.length !== 1) fail('plan approval receipt membership or hash mismatch', EXIT.invalid);
   }
   if (runState.protected_effects_performed.length) fail('protected effect recorded without active host approval', EXIT.blocked);
@@ -675,7 +725,7 @@ function auditV1() {
 }
 
 function help() {
-  output({ name: 'r2rctl', version: VERSION, node: '>=22', exits: EXIT, commands: ['preflight', 'run init', 'intent propose|confirm', 'plan approve', 'task register|start|complete', 'evidence exec', 'review record', 'artifacts record', 'handoff prepare', 'validate', 'audit-v1'] });
+  output({ name: 'r2rctl', version: VERSION, node: '>=22', exits: EXIT, commands: ['preflight', 'run init|abort|block', 'intent propose|confirm', 'plan approve|reject', 'task register|start|complete|retry|fallback', 'evidence exec', 'review record|repair', 'artifacts record', 'handoff prepare', 'validate', 'audit-v1'] });
 }
 
 function dispatch() {
