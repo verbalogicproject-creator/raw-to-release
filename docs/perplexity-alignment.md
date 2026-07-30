@@ -4,8 +4,9 @@ Date: 2026-07-30
 
 This document updates the Perplexity research synthesis with the implementation
 direction taken in this repository. It is a pause-point handoff, not a release
-claim. The worktree is still uncommitted, empirical qualification is incomplete,
-and no merge, push, PR, deployment, publication, or plugin submission occurred.
+claim. A local implementation checkpoint exists on the release branch, empirical
+qualification is incomplete, and no merge, push, PR, deployment, publication,
+or plugin submission occurred.
 
 ## Executive alignment
 
@@ -40,20 +41,24 @@ The new consumer runtime is a compiled, single-file ESM bundle at:
 Consumers need Node 22 and Git, but do not run `npm install`. TypeScript, Ajv,
 and Node types are exactly pinned build/test dependencies only.
 
-### 2. From per-file atomic replacement to manifest-last transactions
+### 2. From per-file replacement to immutable generations
 
 The implementation uses a per-run exclusive lock under ignored runtime state.
 Each mutation:
 
-1. validates the requested transition in memory;
-2. writes and flushes authoritative records with sibling temporary files;
-3. atomically renames each record;
-4. extends a hash-chained event log; and
-5. replaces `run-manifest.json` last as the transaction commit point.
+1. validates the active generation and requested transition in memory;
+2. copies the complete authoritative snapshot into a new staging generation;
+3. writes and flushes changed records and the extended hash-chained event log;
+4. atomically renames the staging directory to its immutable generation number;
+   and
+5. replaces `run-manifest.json` last so its generation pointer is the sole
+   transaction commit point.
 
-Files written before an interrupted manifest replacement are not authoritative.
-The validator rejects corrupt event chains, record hash/length mismatches, and
-ambiguous locks rather than absorbing or deleting state.
+A future generation left by interruption is never authoritative and is rejected,
+not absorbed, on the next mutation or validation. The validator also rejects
+staging directories, missing generations, corrupt event chains, record
+hash/length mismatches, nested symlinks, and ambiguous locks without deleting
+or repairing them.
 
 ### 3. From editable confirmation state to immutable approval receipts
 
@@ -92,8 +97,10 @@ Review receipts contain durable asserted delegation IDs for every implementer,
 the tester, and the reviewer. The CLI requires all of them to be present and
 mutually distinct and rejects review against a stale SHA.
 
-This is provenance, not authentication. If the Codex surface cannot expose
-durable delegation IDs, preflight exits 4 and release readiness is unavailable.
+This is provenance, not authentication. Tester IDs are also cross-bound from
+runtime-produced command receipts into review. If the Codex surface cannot
+expose durable delegation IDs, preflight exits 4 and release readiness is
+unavailable.
 
 ### 6. From artifact names to Git- and filesystem-bound manifests
 
@@ -122,15 +129,41 @@ self-reference.
 - A deterministic CycloneDX SBOM and build-license inventory are generated from
   the exact lockfile.
 
+## First independent review and hardening response
+
+The first independent architect review returned FAIL with no P0 findings and ten
+P1 findings. The current hardening changes respond by:
+
+- using complete immutable generations instead of a set of independently
+  replaced live records;
+- forbidding task registration before plan approval and binding each task to
+  its exact sealed authority entry;
+- denying protected command classes before process creation and executing with
+  a minimal environment;
+- cross-binding tester, implementer, reviewer, evidence, input, and reviewed-SHA
+  provenance;
+- adding plan rejection, abort, block, retry, fallback, and repair transitions
+  with reconstructed counters;
+- rejecting traversal, nested symlinks, future generations, receipt overwrite,
+  stale attempts, post-review product drift, and event/approval cross-run drift;
+  and
+- validating real runtime-emitted records against the canonical schemas.
+
+These changes have local automated evidence, but they are not a final PASS
+until a fresh independent reviewer evaluates the committed repaired candidate.
+
 ## Current automated evidence
 
 Passing at this pause point:
 
-- 26 Node tests, including six positive/negative contract-2 pairs and runtime
+- 33 Node tests, including six positive/negative contract-2 pairs and runtime
   integration tests for preflight, locking, immutable approvals, authority
   drift, dependency rejection, shell-free execution, receipt derivation,
   redaction, identity separation, stale review, unsafe paths, corrupt logs, and
-  read-only v1 audit.
+  read-only v1 audit. Added adversarial cases cover canonical schema conformance
+  of emitted records, interrupted future generations, pre-plan task rejection,
+  protected commands, affected-Dot reconfirmation, latest-attempt policy,
+  traversal, and nested symlinks.
 - 15 Python repository/contract/lifecycle tests.
 - 3 Pocket Tasks tests.
 - deterministic bundle build and regeneration check;
@@ -139,18 +172,19 @@ Passing at this pause point:
 - repository/plugin validation passes; and
 - offline supply-chain inspection passes with zero runtime package imports and
   bundle SHA-256
-  `b4294dada4a4ed717a241842ed6c06bed1c7f3fbd791703581ddd61d9f0f495f`.
+  `77fbd20f2497462ceb095a301024acb86cad6dd0278d7e317d2f545b2cd3cecd`.
 
-## Important unresolved findings
+## Important resolved finding
 
 ### Dependency audit
 
-`npm audit --audit-level=high` currently reports one moderate Ajv advisory
-(`GHSA-2g4f-4pwh-qvx6`) affecting the pinned build dependency `ajv@8.17.1` when
-the optional `$data` mode is used. This repository does not enable `$data`, and
-Ajv is not shipped at runtime, but production closure should still update the
-pin to a patched version, regenerate the lock/SBOM/license report, and rerun all
-checks. This is unresolved evidence, not a pass.
+The initial `ajv@8.17.1` build pin carried advisory `GHSA-2g4f-4pwh-qvx6`.
+The pin is now `ajv@8.20.0`; the lockfile, SBOM, and license report were
+regenerated; schema compilation and the complete local test suite pass; and
+`npm audit --audit-level=high` reports zero vulnerabilities. Ajv remains a
+build/test dependency and is not shipped in the runtime bundle.
+
+## Important unresolved findings
 
 ### Empirical qualification
 
@@ -159,9 +193,9 @@ The following cannot be inferred from local source tests and remain pending:
 - real Node 22 receipts for Linux, macOS, and Windows filesystem/Git behavior;
 - official plugin validation, marketplace cache refresh, and reinstall;
 - fresh installed-plugin greenfield and clean-existing journeys;
-- plan rejection plus affected-Dot reconfirmation;
-- interruption/resume, malformed fallback, retry exhaustion, abort, protected
-  effect refusal, reviewer repair, and two-cycle block journeys;
+- installed-plugin plan rejection plus affected-Dot reconfirmation;
+- installed-plugin interruption/resume, malformed fallback, retry exhaustion,
+  abort, protected-effect refusal, reviewer repair, and two-cycle block journeys;
 - three real fixtures for every route and fallback route;
 - two independently reconstructed run bundles that validate successfully;
 - Pocket Tasks performance receipts for delegation, turn, runtime, and
@@ -187,9 +221,9 @@ for the required Node 22 platform matrix.
 
 Perplexity should evaluate the approach on four questions:
 
-1. Does manifest-last replacement plus a hash-chained event log provide an
-   adequate cross-platform crash-consistency boundary for the stated threat
-   model, especially on Windows?
+1. Does an immutable complete-generation snapshot plus an atomic manifest
+   pointer and hash-chained event log provide an adequate cross-platform
+   crash-consistency boundary, especially on Windows?
 2. Are the contract fields sufficient to detect stale or cross-run evidence
    without creating an impossible final-commit self-reference?
 3. Is host-exposed durable delegation identity a realistic Codex CLI

@@ -63,18 +63,14 @@ class RepositoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "tasks cannot exist"): validate_bundle(value)
 
     def test_complete_task_requires_linked_acceptance_evidence(self):
-        value = bundle(); value["tasks"][0]["result"]["evidence"] = []
-        with self.assertRaises(ContractError): validate_bundle(value)
-        value = bundle(); value["tasks"][0]["result"]["evidence"][0]["acceptance_criterion"] = "not-required"
-        with self.assertRaisesRegex(ContractError, "does not support"): validate_bundle(value)
+        value = bundle(); value["tasks"][0]["evidence_hashes"] = []
+        with self.assertRaisesRegex(ContractError, "receipt hashes"): validate_bundle(value)
 
     def test_release_ready_requires_every_gate_and_linked_evidence(self):
         validate_bundle(bundle())
         for gate in ("plan_approved", "implementation_committed", "tests_fresh", "review_independent", "handoff_committed", "final_worktree_clean"):
             value = bundle(); value["run_state"]["gates"][gate] = False
             with self.subTest(gate=gate), self.assertRaises(ContractError): validate_bundle(value)
-        value = bundle(); value["run_state"]["gates"]["review_evidence_ids"] = ["missing"]
-        with self.assertRaisesRegex(ContractError, "not linked"): validate_bundle(value)
 
     def test_illegal_transition_and_numeric_limits_fail(self):
         value = fixture("run-state"); value["history"] = ["intake", "release_ready"]
@@ -168,11 +164,9 @@ class RepositoryTests(unittest.TestCase):
             with self.subTest(template=filename): validate_schema(json.loads((templates / filename).read_text(encoding="utf-8")), schema)
 
     def test_adversarial_release_ready_evidence_probes_fail(self):
-        value = bundle(); value["tasks"][0]["result"]["evidence"][0]["outcome"] = "fail"
+        value = bundle(); value["tasks"][0]["status"] = "started"
         with self.assertRaises(ContractError): validate_bundle(value)
-        value = bundle(); value["run_state"]["gates"]["review_evidence_ids"] = ["ev-test"]
-        with self.assertRaisesRegex(ContractError, "review gate"): validate_bundle(value)
-        value = bundle(); value["tasks"].append({key: copy.deepcopy(item) for key, item in value["tasks"][0].items() if key != "result"}); value["tasks"][1]["task_id"] = "task-2"
+        value = bundle(); value["tasks"].append(copy.deepcopy(value["tasks"][0])); value["tasks"][1]["task_id"] = "task-2"; value["tasks"][1]["status"] = "registered"
         with self.assertRaisesRegex(ContractError, "every task complete"): validate_bundle(value)
 
     def test_official_validator_launcher_fails_closed_when_missing(self):

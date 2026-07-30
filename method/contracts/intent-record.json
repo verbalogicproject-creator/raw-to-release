@@ -9,7 +9,6 @@
     "revision": {"type": "integer", "minimum": 1},
     "dots": {
       "type": "object",
-      "required": ["literal_task", "strategic_intent", "boundaries", "task_type", "relevant_principles"],
       "additionalProperties": false,
       "properties": {
         "literal_task": {"$ref": "#/$defs/dot"},
@@ -20,6 +19,7 @@
       }
     },
     "confirmation_state": {"enum": ["draft", "confirmed"]},
+    "intent_hash": {"$ref": "common.json#/$defs/sha256"},
     "privacy_acknowledged": {"const": true},
     "provenance": {
       "type": "object", "required": ["source", "recorded_at"], "additionalProperties": false,
@@ -29,7 +29,7 @@
   "$defs": {
     "dot": {
       "type": "object", "required": ["value", "confirmed", "confirmed_at"], "additionalProperties": false,
-      "properties": {"value": {"type": "string", "minLength": 1}, "confirmed": {"type": "boolean"}, "confirmed_at": {"type": ["string", "null"]}}
+      "properties": {"revision": {"type": "integer", "minimum": 1}, "content_hash": {"$ref": "common.json#/$defs/sha256"}, "value": {"type": "string", "minLength": 1}, "confirmed": {"type": "boolean"}, "confirmed_at": {"type": ["string", "null"]}}
     }
   },
   "additionalProperties": false

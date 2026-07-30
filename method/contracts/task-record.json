@@ -2,18 +2,25 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw-to-release.dev/contracts/2/task-record.json",
   "type": "object",
-  "required": ["contract_version", "task_id", "dot_references", "dependencies", "selected_route", "selected_tier", "allowed_tools", "forbidden_tools", "envelope"],
+  "required": ["contract_version", "task_id", "delegation_id", "tester_delegation_id", "approved_authority_hash", "task_authority_hash", "dependencies", "allowed_tools", "forbidden_tools", "commands", "acceptance_evidence", "status"],
   "properties": {
     "contract_version": {"$ref": "common.json#/$defs/contract_version"},
     "task_id": {"$ref": "common.json#/$defs/identifier"},
-    "dot_references": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "common.json#/$defs/dot_name"}},
+    "delegation_id": {"$ref": "common.json#/$defs/identifier"},
+    "tester_delegation_id": {"$ref": "common.json#/$defs/identifier"},
+    "approved_authority_hash": {"$ref": "common.json#/$defs/sha256"},
+    "task_authority_hash": {"$ref": "common.json#/$defs/sha256"},
     "dependencies": {"type": "array", "uniqueItems": true, "items": {"$ref": "common.json#/$defs/identifier"}},
-    "selected_route": {"type": "string", "minLength": 1},
-    "selected_tier": {"enum": ["economy", "balanced", "deep", "review"]},
     "allowed_tools": {"type": "array", "items": {"type": "string"}},
     "forbidden_tools": {"type": "array", "items": {"type": "string"}},
-    "envelope": {"$ref": "task-envelope.json"},
-    "result": {"$ref": "task-result.json"}
+    "commands": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["command_id", "argv", "cwd"], "additionalProperties": false, "properties": {"command_id": {"$ref": "common.json#/$defs/identifier"}, "argv": {"type": "array", "minItems": 1, "items": {"type": "string"}}, "cwd": {"$ref": "common.json#/$defs/safe_path"}, "kind": {"enum": ["test", "check", "build"]}, "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 3600000}}}},
+    "acceptance_evidence": {"type": "array", "minItems": 1, "items": {"$ref": "common.json#/$defs/identifier"}},
+    "status": {"enum": ["registered", "started", "complete"]},
+    "started_at": {"$ref": "common.json#/$defs/timestamp"},
+    "completed_at": {"$ref": "common.json#/$defs/timestamp"},
+    "last_recovery": {"enum": ["retry", "fallback"]},
+    "last_recovery_at": {"$ref": "common.json#/$defs/timestamp"},
+    "evidence_hashes": {"type": "array", "items": {"$ref": "common.json#/$defs/sha256"}}
   },
   "additionalProperties": false
 }

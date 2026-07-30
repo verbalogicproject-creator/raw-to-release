@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* Raw to Release v0.1.1: dependency-free Node 22 state and evidence runtime. */
-import { closeSync, constants, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, } from 'node:fs';
+import { closeSync, constants, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -13,7 +13,7 @@ const TRANSITIONS = {
     intake: ['intent_confirmed', 'blocked', 'aborted'],
     intent_confirmed: ['planned', 'blocked', 'aborted'],
     planned: ['approved', 'intent_confirmed', 'blocked', 'aborted'],
-    approved: ['implementing', 'blocked', 'aborted'],
+    approved: ['implementing', 'intent_confirmed', 'blocked', 'aborted'],
     implementing: ['verifying', 'blocked', 'aborted'],
     verifying: ['release_ready', 'implementing', 'blocked', 'aborted'],
     release_ready: [], blocked: [], aborted: [],
@@ -21,6 +21,7 @@ const TRANSITIONS = {
 const LIMITS = { delegations: 12, concurrent_agents: 3, implementation_tasks: 8, fix_review_cycles: 2, retries: 1 };
 const PLAN_SECTIONS = ['Scope', 'Architecture', 'Affected areas', 'Tests', 'Risks', 'Exclusions', 'Task authorities'];
 const HANDOFF_SECTIONS = ['Candidate', 'Intent and plan', 'Verification', 'Independent review', 'Artifacts', 'Residual risks', 'Protected effects'];
+const initialGates = () => ({ privacy_acknowledged: true, dots_confirmed: false, plan_approved: false, branch_created: false, implementation_committed: false, tests_fresh: false, tests_outcome: 'unknown', test_evidence_ids: [], review_independent: false, review_outcome: 'unknown', review_evidence_ids: [], handoff_committed: false, final_worktree_clean: false });
 class R2RError extends Error {
     constructor(message, code = EXIT.invalid) { super(message); this.code = code; }
 }
@@ -33,7 +34,9 @@ function canonical(value) {
     return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
 }
 const sha256 = (value) => createHash('sha256').update(typeof value === 'string' || Buffer.isBuffer(value) ? value : canonical(value)).digest('hex');
-const isoNow = () => process.env.R2RCTL_TEST_TIME || new Date().toISOString();
+// Time is evidence, never a caller-controlled input.  Tests normalize timestamps
+// at their boundary rather than teaching the shipped runtime a test clock.
+const isoNow = () => new Date().toISOString();
 const json = (path) => {
     try {
         return JSON.parse(readFileSync(path, 'utf8'));
@@ -73,11 +76,24 @@ function parse(argv) {
 }
 const cli = parse(process.argv.slice(2));
 const root = resolve(String(cli.get('root') || process.cwd()));
-const runId = () => String(cli.get('run', true));
+const runId = () => {
+    const id = String(cli.get('run', true));
+    if (!/^\d{8}-\d{4}-[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id))
+        fail('invalid run ID');
+    return id;
+};
 const r2rRoot = () => join(root, '.raw-to-release');
 const runsRoot = () => join(r2rRoot(), 'runs');
 const runRoot = (required = true) => {
     const path = join(runsRoot(), runId());
+    // Do not permit a run name, its parent, or an already-created run to cross a
+    // symlink.  This check is deliberately repeated at every command boundary.
+    let cursor = root;
+    for (const part of ['.raw-to-release', 'runs', runId()]) {
+        cursor = join(cursor, part);
+        if (existsSync(cursor) && lstatSync(cursor).isSymbolicLink())
+            fail('run path contains a symlink', EXIT.invalid);
+    }
     if (required && !existsSync(path))
         fail(`run does not exist: ${runId()}`, EXIT.blocked);
     return path;
@@ -128,6 +144,23 @@ function safeRelative(path, { mustExist = true } = {}) {
             fail(`not a regular file: ${path}`, EXIT.invalid);
     }
     return target;
+}
+function safeDirectory(path) {
+    if (path === '.')
+        return root;
+    if (typeof path !== 'string' || path === '' || isAbsolute(path) || path.replaceAll('\\', '/').split('/').includes('..'))
+        fail(`directory escapes repository: ${path}`, EXIT.invalid);
+    let cursor = root;
+    for (const part of path.replaceAll('\\', '/').split('/')) {
+        cursor = join(cursor, part);
+        if (!existsSync(cursor))
+            fail(`missing directory: ${path}`, EXIT.invalid);
+        if (lstatSync(cursor).isSymbolicLink())
+            fail(`directory contains a symlink: ${path}`, EXIT.invalid);
+    }
+    if (!statSync(cursor).isDirectory())
+        fail(`not a directory: ${path}`, EXIT.invalid);
+    return cursor;
 }
 function atomicWrite(path, content) {
     mkdirSync(dirname(path), { recursive: true });
@@ -185,7 +218,7 @@ function locked(action) {
     }
 }
 function events(path) {
-    const file = join(path, 'events.json');
+    const file = recordPath(path, 'events.json');
     if (!existsSync(file))
         return [];
     const value = json(file);
@@ -206,7 +239,16 @@ function manifest(path) {
     const file = join(path, 'run-manifest.json');
     return existsSync(file) ? json(file) : { contract_version: CONTRACT, generation: 0, files: {} };
 }
+function generationRoot(path, generation) { return join(path, 'generations', String(generation)); }
+function recordPath(path, name) {
+    const current = manifest(path);
+    return current.generation > 0 ? join(generationRoot(path, current.generation), name) : join(path, name);
+}
 function transaction(path, changes, eventType, eventData = {}) {
+    // A manifest is an authority boundary, not merely a checksum index.  Refuse
+    // to continue from a partially-written or ambiguous generation.
+    if (existsSync(join(path, 'run-manifest.json')))
+        validateManifest(path, { rejectOrphans: true });
     const currentEvents = events(path);
     const prior = currentEvents.at(-1)?.event_hash || null;
     const body = { sequence: currentEvents.length + 1, at: isoNow(), type: eventType, data: eventData, prior_event_hash: prior };
@@ -215,19 +257,39 @@ function transaction(path, changes, eventType, eventData = {}) {
     all.set('events.json', nextEvents);
     const current = manifest(path);
     const files = { ...current.files };
+    const nextGeneration = current.generation + 1;
+    const stage = join(path, '.staging', `${nextGeneration}-${randomUUID()}`);
+    const generation = generationRoot(path, nextGeneration);
+    mkdirSync(stage, { recursive: true });
+    // Re-materialize the complete immutable generation.  The only live pointer is
+    // run-manifest.json, swapped after this directory has been durably renamed.
+    for (const [name, expected] of Object.entries(current.files)) {
+        const source = recordPath(path, name);
+        const content = readFileSync(source);
+        atomicWrite(join(stage, name), content);
+        files[name] = expected;
+    }
     for (const [name, value] of all) {
         if (name === 'run-manifest.json' || isAbsolute(name) || name.split('/').includes('..'))
             fail(`unsafe authoritative record name: ${name}`);
         const content = typeof value === 'string' ? value.replaceAll('\r\n', '\n') : `${canonical(value)}\n`;
-        atomicWrite(join(path, name), content);
+        atomicWrite(join(stage, name), content);
         files[name] = { sha256: sha256(content), bytes: Buffer.byteLength(content), type: 'regular' };
     }
-    const next = { contract_version: CONTRACT, generation: current.generation + 1, files };
+    mkdirSync(dirname(generation), { recursive: true });
+    renameSync(stage, generation);
+    try {
+        const directory = openSync(dirname(generation), constants.O_RDONLY);
+        fsyncSync(directory);
+        closeSync(directory);
+    }
+    catch { /* unsupported directory fsync */ }
+    const next = { contract_version: CONTRACT, generation: nextGeneration, files };
     atomicWrite(join(path, 'run-manifest.json'), `${canonical(next)}\n`); // commit point, always last
     return next;
 }
 function loadRecord(name) {
-    const path = join(runRoot(), name);
+    const path = recordPath(runRoot(), name);
     if (!existsSync(path))
         fail(`missing authoritative record: ${name}`, EXIT.blocked);
     return json(path);
@@ -278,8 +340,6 @@ function runInit() {
     if (!cleanWorktree())
         fail('run init requires a clean worktree', EXIT.blocked);
     const id = runId();
-    if (!/^\d{8}-\d{4}-[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id))
-        fail('invalid run ID');
     const path = runRoot(false);
     if (existsSync(path))
         fail('run already exists', EXIT.blocked);
@@ -289,7 +349,8 @@ function runInit() {
             contract_version: CONTRACT, run_id: id, state: 'intake', history: ['intake'],
             created_at: isoNow(), updated_at: isoNow(), base_sha: gitText('rev-parse', 'HEAD'),
             branch: `r2r/${id}`, counters: { delegations: 0, concurrent_agents: 0, implementation_tasks: 0, fix_review_cycles: 0, retries: 0 },
-            gates: {}, protected_effects_performed: [], authority_hash: null,
+            gates: initialGates(), artifacts: { intent: 'intent.json', plan: '', tasks: 'tasks.json', task_records: [], verification: 'verification.json', handoff: '' },
+            protected_effects_performed: [], authority_hash: null,
         };
         transaction(path, { 'run-state.json': value }, 'run.init', { run_id: id, base_sha: value.base_sha });
     });
@@ -302,13 +363,13 @@ function intentPropose() {
     const value = String(cli.get('value', true));
     const path = runRoot();
     locked(() => {
-        const prior = existsSync(join(path, 'intent.json')) ? loadRecord('intent.json') : { contract_version: CONTRACT, run_id: runId(), dots: {}, confirmation_state: 'draft', privacy_acknowledged: true };
+        const prior = manifest(path).files['intent.json'] ? loadRecord('intent.json') : { contract_version: CONTRACT, run_id: runId(), revision: 0, dots: {}, confirmation_state: 'draft', privacy_acknowledged: true, provenance: { source: 'user', recorded_at: isoNow() } };
         assertV2(prior, 'intent');
         if (prior.confirmation_state === 'confirmed')
             fail('confirmed intent is immutable', EXIT.blocked);
         const revision = (prior.dots[dot]?.revision || 0) + 1;
         const proposal = { contract_version: CONTRACT, run_id: runId(), dot, revision, value, content_hash: sha256(value), proposed_at: isoNow() };
-        const next = { ...prior, dots: { ...prior.dots, [dot]: { revision, value, content_hash: proposal.content_hash, confirmed: false, confirmed_at: null } } };
+        const next = { ...prior, revision, dots: { ...prior.dots, [dot]: { revision, value, content_hash: proposal.content_hash, confirmed: false, confirmed_at: null } } };
         transaction(path, { [`proposals/${dot}-r${revision}.json`]: proposal, 'intent.json': next }, 'intent.propose', { dot, revision, content_hash: proposal.content_hash });
         output({ dot, revision, content_hash: proposal.content_hash, value });
     });
@@ -350,6 +411,8 @@ function planApprove() {
     const authorities = json(authorityFile);
     if (!Array.isArray(authorities.tasks) || authorities.tasks.length === 0 || authorities.tasks.length > LIMITS.implementation_tasks)
         fail('authority set must contain 1-8 tasks');
+    if (new Set(authorities.tasks.map((task) => task.task_id)).size !== authorities.tasks.length || authorities.tasks.some((task) => !task.task_id || !Array.isArray(task.commands) || !Array.isArray(task.allowed_tools) || !Array.isArray(task.forbidden_tools)))
+        fail('every authority entry must bind task ID, commands, allowed tools, and forbidden tools');
     const authorityHash = sha256(authorities);
     const planHash = sha256(text);
     locked(() => {
@@ -366,7 +429,43 @@ function planApprove() {
         output({ plan_hash: planHash, authority_hash: authorityHash, state: nextState.state });
     });
 }
-function loadTasks() { return existsSync(join(runRoot(), 'tasks.json')) ? loadRecord('tasks.json') : { contract_version: CONTRACT, run_id: runId(), tasks: [] }; }
+function planReject() {
+    const path = runRoot();
+    const user = String(cli.get('user', true));
+    const reason = String(cli.get('reason', true));
+    const affected = String(cli.get('dots', true)).split(',').filter(Boolean);
+    if (!affected.length || affected.some((dot) => !DOTS.includes(dot)))
+        fail('--dots must list affected Dot names');
+    locked(() => {
+        const current = state();
+        if (!['planned', 'approved'].includes(current.state))
+            fail('plan rejection is not allowed in the current state', EXIT.blocked);
+        const next = transition(current, 'intent_confirmed');
+        next.authority_hash = null;
+        next.gates = { ...next.gates, plan_approved: false };
+        const intent = loadRecord('intent.json');
+        const dots = { ...intent.dots };
+        for (const dot of affected)
+            dots[dot] = { ...dots[dot], confirmed: false, confirmed_at: null };
+        const nextIntent = { ...intent, dots, confirmation_state: 'draft', intent_hash: sha256(DOTS.map((dot) => dots[dot])) };
+        const receipt = { contract_version: CONTRACT, receipt_type: 'plan-rejection', user, reason, rejected_at: isoNow(), target: 'plan.md', rejected_authority_hash: current.authority_hash };
+        transaction(path, { 'intent.json': nextIntent, 'run-state.json': next, [receiptName('approval-plan-rejection', sha256(receipt).slice(0, 16))]: receipt }, 'plan.reject', { user, reason, affected_dots: affected, rejected_authority_hash: current.authority_hash });
+        output({ rejected: true, affected_dots: affected, state: next.state });
+    });
+}
+function runTerminal(action) {
+    const path = runRoot();
+    const reason = String(cli.get('reason', true));
+    locked(() => {
+        const current = state();
+        if (['release_ready', 'blocked', 'aborted'].includes(current.state))
+            fail('run is already terminal', EXIT.blocked);
+        const next = transition(current, action === 'abort' ? 'aborted' : 'blocked');
+        transaction(path, { 'run-state.json': next }, `run.${action}`, { reason });
+        output({ state: next.state, reason });
+    });
+}
+function loadTasks() { return manifest(runRoot()).files['tasks.json'] ? loadRecord('tasks.json') : { contract_version: CONTRACT, run_id: runId(), tasks: [] }; }
 function assertDag(tasks) {
     const byId = new Map(tasks.map((task) => [task.task_id, task]));
     const visiting = new Set();
@@ -391,6 +490,13 @@ function assertDag(tasks) {
     for (const id of byId.keys())
         visit(id);
 }
+function commandReceipts(path, taskId, commandId) {
+    return Object.keys(manifest(path).files)
+        .filter((name) => name.startsWith('receipts/command-'))
+        .map((name) => loadRecord(name))
+        .filter((receipt) => receipt.task_id === taskId && receipt.command_id === commandId)
+        .sort((left, right) => left.attempt - right.attempt || left.ended_at.localeCompare(right.ended_at));
+}
 function taskCommand(action) {
     const path = runRoot();
     const id = String(cli.get('id', action !== 'register'));
@@ -398,6 +504,8 @@ function taskCommand(action) {
     locked(() => {
         let nextState = state();
         if (action === 'register') {
+            if (!['approved', 'implementing'].includes(nextState.state) || !nextState.authority_hash)
+                fail('task registration requires an approved sealed plan', EXIT.blocked);
             const file = safeRelative(String(cli.get('file', true)));
             const task = json(file);
             assertV2(task, 'task');
@@ -405,10 +513,17 @@ function taskCommand(action) {
                 fail('task ID does not match file');
             if (tasks.tasks.some((item) => item.task_id === task.task_id))
                 fail('duplicate task ID', EXIT.blocked);
-            if (!task.delegation_id || !Array.isArray(task.commands) || !Array.isArray(task.acceptance_evidence))
-                fail('task lacks sealed identity, commands, or evidence criteria');
+            if (!task.delegation_id || !task.tester_delegation_id || !Array.isArray(task.commands) || !Array.isArray(task.acceptance_evidence))
+                fail('task lacks sealed implementer/tester identity, commands, or evidence criteria');
             if (task.approved_authority_hash !== nextState.authority_hash)
                 fail('task authority drift after approval', EXIT.blocked);
+            const authorities = loadRecord('task-authorities.json');
+            const authority = authorities.tasks.find((entry) => entry.task_id === task.task_id);
+            if (!authority || task.task_authority_hash !== sha256(authority))
+                fail('task is not bound to its exact approved authority entry', EXIT.blocked);
+            for (const key of ['commands', 'allowed_tools', 'forbidden_tools'])
+                if (canonical(task[key] || []) !== canonical(authority[key] || []))
+                    fail(`task ${key} differs from its approved authority entry`, EXIT.blocked);
             tasks = { ...tasks, tasks: [...tasks.tasks, { ...task, status: 'registered' }] };
             assertDag(tasks.tasks);
             if (tasks.tasks.length > LIMITS.implementation_tasks)
@@ -433,15 +548,50 @@ function taskCommand(action) {
                 if (nextState.state === 'approved')
                     nextState = transition(nextState, 'implementing');
             }
+            else if (action === 'retry' || action === 'fallback') {
+                const failed = Object.entries(manifest(path).files).filter(([name]) => name.startsWith('receipts/command-')).map(([name]) => loadRecord(name)).some((receipt) => receipt.task_id === task.task_id && receipt.outcome === 'fail');
+                if (!failed || task.status !== 'started')
+                    fail(`${action} requires a failed started task`, EXIT.blocked);
+                if (action === 'retry') {
+                    const nextCount = nextState.counters.retries + 1;
+                    if (nextCount > LIMITS.retries) {
+                        nextState = transition(nextState, 'blocked');
+                        transaction(path, { 'run-state.json': nextState }, 'task.retry.exhausted', { task_id: id });
+                        fail('retry limit exhausted', EXIT.blocked);
+                    }
+                    nextState = { ...nextState, counters: { ...nextState.counters, retries: nextCount } };
+                }
+                else {
+                    const authorityFile = safeRelative(String(cli.get('authority-file', true)));
+                    const user = String(cli.get('user', true));
+                    const revised = json(authorityFile);
+                    const authority = revised.tasks?.find((entry) => entry.task_id === id);
+                    if (!authority || !Array.isArray(authority.commands) || !Array.isArray(authority.allowed_tools) || !Array.isArray(authority.forbidden_tools))
+                        fail('fallback requires a complete revised authority entry');
+                    const priorHash = nextState.authority_hash;
+                    const revisedHash = sha256(revised);
+                    if (revisedHash === priorHash)
+                        fail('fallback authority revision must change the sealed set', EXIT.blocked);
+                    task.approved_authority_hash = revisedHash;
+                    task.task_authority_hash = sha256(authority);
+                    task.commands = authority.commands;
+                    task.allowed_tools = authority.allowed_tools;
+                    task.forbidden_tools = authority.forbidden_tools;
+                    nextState = { ...nextState, authority_hash: revisedHash, counters: { ...nextState.counters, delegations: nextState.counters.delegations + 1 } };
+                    if (nextState.counters.delegations > LIMITS.delegations)
+                        fail('delegation limit exhausted', EXIT.blocked);
+                    const approval = { contract_version: CONTRACT, receipt_type: 'authority-revision', user, revision: nextState.counters.delegations, displayed_content_hash: revisedHash, authority_hash: revisedHash, prior_authority_hash: priorHash, confirmed_at: isoNow(), target: 'task-authorities.json' };
+                    transaction(path, { 'task-authorities.json': revised, [receiptName('approval-authority', sha256(approval).slice(0, 16))]: approval }, 'authority.revise', { task_id: id, prior_authority_hash: priorHash, authority_hash: revisedHash });
+                }
+                task.last_recovery = action;
+                task.last_recovery_at = isoNow();
+            }
             else {
                 if (task.status !== 'started')
                     fail('task is not started', EXIT.blocked);
-                const receipts = (task.acceptance_evidence || []).map((criterion) => {
-                    const entry = Object.keys(manifest(path).files).find((name) => name.startsWith('receipts/command-') && json(join(path, name)).task_id === task.task_id && json(join(path, name)).command_id === criterion);
-                    if (!entry)
-                        fail(`missing receipt for acceptance criterion: ${criterion}`, EXIT.blocked);
-                    return loadRecord(entry);
-                });
+                const receipts = (task.acceptance_evidence || []).map((criterion) => commandReceipts(path, task.task_id, criterion).at(-1)).filter(Boolean);
+                if (receipts.length !== task.acceptance_evidence.length)
+                    fail('missing receipt for an acceptance criterion', EXIT.blocked);
                 if (receipts.some((receipt) => receipt.outcome !== 'pass'))
                     fail('task completion evidence is not passing', EXIT.blocked);
                 task.status = 'complete';
@@ -456,6 +606,25 @@ function taskCommand(action) {
         output({ task_id: action === 'register' ? cli.get('id') : id, status: tasks.tasks.find((item) => item.task_id === (action === 'register' ? cli.get('id') : id)).status });
     });
 }
+function reviewRepair() {
+    const path = runRoot();
+    const reason = String(cli.get('reason', true));
+    locked(() => {
+        const current = state();
+        const review = loadRecord('review.json');
+        if (review.verdict !== 'fail' || current.state !== 'implementing')
+            fail('review repair requires a failed review during implementation', EXIT.blocked);
+        const count = current.counters.fix_review_cycles + 1;
+        if (count > LIMITS.fix_review_cycles) {
+            const blocked = transition(current, 'blocked');
+            transaction(path, { 'run-state.json': blocked }, 'review.repair.exhausted', { reason });
+            fail('repair-review limit exhausted', EXIT.blocked);
+        }
+        const next = { ...current, counters: { ...current.counters, fix_review_cycles: count } };
+        transaction(path, { 'run-state.json': next }, 'review.repair', { reason, review_receipt_id: review.receipt_id });
+        output({ repair_cycle: count });
+    });
+}
 function evidenceExec() {
     const path = runRoot();
     const taskId = String(cli.get('task', true));
@@ -467,20 +636,28 @@ function evidenceExec() {
     const approved = task.commands.find((command) => command.command_id === commandId);
     if (!approved || !Array.isArray(approved.argv) || approved.argv.length === 0)
         fail('command is not in the approved argv set', EXIT.blocked);
+    const commandText = approved.argv.join(' ').toLowerCase();
+    if (/(^|\s)(?:git\s+push|npm\s+(?:install|publish)|pnpm\s+(?:install|publish)|yarn\s+(?:add|install|publish)|curl|wget|ssh|scp|rm|rmdir|deploy)(?:\s|$)/.test(commandText) || (task.forbidden_tools || []).some((effect) => commandText.includes(String(effect).toLowerCase())))
+        fail('protected, destructive, install, network, or forbidden command denied without immutable host approval', EXIT.blocked);
     if (cli.flags.has('--'))
         fail('evidence exec does not accept narrated or replacement argv', EXIT.blocked);
     const cwd = approved.cwd || '.';
-    let cwdPath = root;
-    if (cwd !== '.') {
-        if (isAbsolute(cwd) || cwd.replaceAll('\\', '/').split('/').includes('..'))
-            fail('command cwd escapes repository', EXIT.blocked);
-        cwdPath = resolve(root, cwd);
-        if (!existsSync(cwdPath) || lstatSync(cwdPath).isSymbolicLink() || !statSync(cwdPath).isDirectory())
-            fail('approved command cwd is unavailable', EXIT.blocked);
-    }
+    const cwdPath = safeDirectory(cwd);
+    const priorReceipts = commandReceipts(path, taskId, commandId);
+    const latest = priorReceipts.at(-1);
+    if (latest?.outcome === 'pass')
+        fail('passing evidence is immutable; repeat execution is not authorized', EXIT.blocked);
+    if (latest && (!task.last_recovery_at || task.last_recovery_at <= latest.ended_at))
+        fail('another attempt requires an authorized retry or fallback', EXIT.blocked);
+    const attempt = priorReceipts.length + 1;
     const startedAt = isoNow();
     const implementationSha = gitText('rev-parse', 'HEAD');
-    const result = spawnSync(approved.argv[0], approved.argv.slice(1), { cwd: cwdPath, shell: false, encoding: 'utf8', windowsHide: true, timeout: Number(approved.timeout_ms || 300000), maxBuffer: 16 * 1024 * 1024 });
+    const statusBefore = gitText('status', '--porcelain=v1', '-z', '--untracked-files=all');
+    const minimalEnv = { PATH: process.env.PATH || '', LANG: 'C', LC_ALL: 'C', TZ: 'UTC' };
+    for (const key of ['SystemRoot', 'ComSpec', 'PATHEXT', 'TEMP', 'TMP'])
+        if (process.env[key])
+            minimalEnv[key] = process.env[key];
+    const result = spawnSync(approved.argv[0], approved.argv.slice(1), { cwd: cwdPath, shell: false, encoding: 'utf8', windowsHide: true, env: minimalEnv, timeout: Number(approved.timeout_ms || 300000), maxBuffer: 16 * 1024 * 1024 });
     const endedAt = isoNow();
     const stdout = result.stdout || '';
     const stderr = result.stderr || '';
@@ -489,12 +666,12 @@ function evidenceExec() {
         passed: Number((stdout.match(/\b(?:passed|pass(?:ed)?)\b/gi) || []).length),
         failed: Number((`${stdout}\n${stderr}`.match(/\b(?:failed|failure)\b/gi) || []).length),
     } : null;
-    const receiptId = `${taskId}-${commandId}-${sha256(`${startedAt}:${implementationSha}`).slice(0, 12)}`;
+    const receiptId = `${taskId}-${commandId}-${randomUUID()}-${Date.now().toString(36)}`;
     const receipt = {
         contract_version: CONTRACT, receipt_type: 'command', receipt_id: receiptId, run_id: runId(), task_id: taskId,
-        command_id: commandId, argv: approved.argv, cwd, implementation_sha: implementationSha,
+        command_id: commandId, argv: approved.argv, cwd, implementation_sha: implementationSha, tester_delegation_id: task.tester_delegation_id, attempt,
         started_at: startedAt, ended_at: endedAt, exit_code: result.status ?? 127,
-        outcome: result.status === 0 ? 'pass' : 'fail', test_counts: counts,
+        outcome: result.status === 0 && gitText('rev-parse', 'HEAD') === implementationSha && gitText('status', '--porcelain=v1', '-z', '--untracked-files=all') === statusBefore ? 'pass' : 'fail', test_counts: counts,
         stdout_sha256: sha256(stdout), stderr_sha256: sha256(stderr), failure_excerpt: excerpt,
     };
     locked(() => transaction(path, { [receiptName('command', receiptId)]: receipt }, 'evidence.exec', { receipt_id: receiptId, outcome: receipt.outcome, exit_code: receipt.exit_code }));
@@ -517,6 +694,23 @@ function reviewRecord() {
         fail('review is stale or for another commit', EXIT.blocked);
     if (!['pass', 'fail'].includes(review.verdict))
         fail('invalid review verdict');
+    const tasks = loadTasks();
+    const receipts = Object.entries(manifest(path).files).filter(([name]) => name.startsWith('receipts/command-')).map(([name]) => loadRecord(name));
+    const implementers = [...new Set(tasks.tasks.map((task) => task.delegation_id))].sort();
+    if (canonical([...review.implementer_delegation_ids].sort()) !== canonical(implementers))
+        fail('review implementer identities do not match registered task provenance', EXIT.blocked);
+    const testers = [...new Set(receipts.map((item) => item.tester_delegation_id))];
+    if (testers.length !== 1 || testers[0] !== review.tester_delegation_id)
+        fail('review tester identity does not match command receipt provenance', EXIT.blocked);
+    const expectedInputs = { plan: sha256(readFileSync(recordPath(path, 'plan.md'))), tasks: sha256(loadRecord('tasks.json')) };
+    for (const receipt of receipts)
+        expectedInputs[`receipt:${receipt.receipt_id}`] = sha256(receipt);
+    if (canonical(review.input_hashes) !== canonical(expectedInputs))
+        fail('review input hashes do not match authoritative inputs and evidence', EXIT.blocked);
+    if (canonical([...review.evidence_ids].sort()) !== canonical(receipts.map((item) => item.receipt_id).sort()))
+        fail('review evidence IDs do not match command receipts', EXIT.blocked);
+    if (review.verdict === 'pass' && review.findings.some((finding) => finding.severity === 'P0' || finding.severity === 'P1'))
+        fail('PASS review cannot contain P0 or P1 findings', EXIT.blocked);
     const receipt = { ...review, receipt_type: 'review', run_id: runId(), recorded_at: isoNow(), receipt_id: sha256(review).slice(0, 24) };
     locked(() => transaction(path, { [receiptName('review', receipt.receipt_id)]: receipt, 'review.json': receipt }, 'review.record', { receipt_id: receipt.receipt_id, verdict: receipt.verdict }));
     output(receipt);
@@ -553,32 +747,98 @@ function handoffPrepare() {
         if (review.verdict !== 'pass')
             fail('handoff requires passing independent review', EXIT.blocked);
         const candidate = review.reviewed_sha;
-        if (git(['merge-base', '--is-ancestor', candidate, 'HEAD'], { allowFailure: true }).status !== 0)
-            fail('reviewed candidate is not an ancestor of HEAD', EXIT.blocked);
-        if (!existsSync(join(path, 'artifact-manifest.json')))
+        if (candidate !== gitText('rev-parse', 'HEAD'))
+            fail('product changed after review; a new review is required', EXIT.blocked);
+        if (!manifest(path).files['artifact-manifest.json'])
             fail('artifact manifest is required', EXIT.blocked);
         nextState = transition(nextState, 'verifying');
         nextState = transition(nextState, 'release_ready');
         const content = `# Raw to Release handoff\n\n## Candidate\n\nVerified implementation SHA: \`${candidate}\`. The final handoff commit is reported by the parent after read-only validation.\n\n## Intent and plan\n\nImmutable intent and plan approval receipts are in this run.\n\n## Verification\n\nApproved command receipts were produced by r2rctl.\n\n## Independent review\n\nReview receipt \`${review.receipt_id}\` returned PASS.\n\n## Artifacts\n\nSee \`artifact-manifest.json\`.\n\n## Residual risks\n\n${residual}\n\n## Protected effects\n\nNo merge, push, PR creation, deployment, publication, or plugin submission was performed.\n`;
         markdownSections(content, HANDOFF_SECTIONS, 'handoff');
-        transaction(path, { 'handoff.md': content, 'run-state.json': nextState }, 'handoff.prepare', { implementation_sha: candidate });
+        const commandReceipts = Object.keys(manifest(path).files).filter((name) => name.startsWith('receipts/command-'));
+        const verification = { contract_version: CONTRACT, run_id: runId(), implementation_sha: candidate, command_receipts: commandReceipts, review_receipt: receiptName('review', review.receipt_id), outcome: 'pass' };
+        transaction(path, { 'handoff.md': content, 'verification.json': verification, 'run-state.json': nextState }, 'handoff.prepare', { implementation_sha: candidate });
         output({ prepared: true, implementation_sha: candidate, state: nextState.state });
     });
 }
-function validateManifest(path) {
+function validateManifest(path, { rejectOrphans = false } = {}) {
     const value = manifest(path);
     assertV2(value, 'run manifest');
+    if (!Number.isInteger(value.generation) || value.generation < 1)
+        fail('invalid manifest generation', EXIT.invalid);
+    const active = generationRoot(path, value.generation);
+    if (!existsSync(active) || lstatSync(active).isSymbolicLink() || !statSync(active).isDirectory())
+        fail('missing active generation', EXIT.invalid);
+    if (rejectOrphans) {
+        const staging = join(path, '.staging');
+        if (existsSync(staging) && lstatSync(staging).isDirectory()) {
+            // An interrupted staging write must be investigated, never incorporated.
+            if (readdirSync(staging).length)
+                fail('orphan staged generation', EXIT.invalid);
+        }
+        const generations = readdirSync(join(path, 'generations'));
+        if (generations.some((entry) => !/^\d+$/.test(entry) || Number(entry) > value.generation))
+            fail('orphan or ambiguous generation', EXIT.invalid);
+    }
     for (const [name, expected] of Object.entries(value.files)) {
-        const full = join(path, name);
-        const rel = relative(path, full);
+        const full = join(active, name);
+        const rel = relative(active, full);
         if (!rel || rel.startsWith('..') || isAbsolute(rel) || !existsSync(full) || lstatSync(full).isSymbolicLink() || !statSync(full).isFile())
             fail(`invalid authoritative artifact: ${name}`, EXIT.invalid);
         const bytes = readFileSync(full);
         if (sha256(bytes) !== expected.sha256 || bytes.length !== expected.bytes || expected.type !== 'regular')
             fail(`authoritative artifact hash mismatch: ${name}`, EXIT.invalid);
     }
+    const listed = new Set(Object.keys(value.files));
+    function walk(directory, prefix = '') {
+        for (const entry of readdirSync(directory, { withFileTypes: true })) {
+            const name = prefix ? `${prefix}/${entry.name}` : entry.name;
+            const full = join(directory, entry.name);
+            if (entry.isSymbolicLink())
+                fail(`symlink in active generation: ${name}`, EXIT.invalid);
+            if (entry.isDirectory())
+                walk(full, name);
+            else if (!entry.isFile() || !listed.has(name))
+                fail(`unlisted authoritative generation entry: ${name}`, EXIT.invalid);
+        }
+    }
+    walk(active);
     events(path);
     return value;
+}
+function reconstruct(log) {
+    const history = ['intake'];
+    const counters = { delegations: 0, concurrent_agents: 0, implementation_tasks: 0, fix_review_cycles: 0, retries: 0 };
+    const confirmed = new Set();
+    const implementers = new Set();
+    for (const event of log) {
+        if (event.type === 'intent.confirm') {
+            confirmed.add(event.data.dot);
+            if (confirmed.size === DOTS.length && history.at(-1) === 'intake')
+                history.push('intent_confirmed');
+        }
+        else if (event.type === 'plan.approve')
+            history.push('planned', 'approved');
+        else if (event.type === 'plan.reject')
+            history.push('intent_confirmed');
+        else if (event.type === 'task.register')
+            counters.implementation_tasks += 1;
+        else if (event.type === 'task.start' && history.at(-1) === 'approved')
+            history.push('implementing');
+        else if (event.type === 'task.retry')
+            counters.retries += 1;
+        else if (event.type === 'review.repair')
+            counters.fix_review_cycles += 1;
+        else if (event.type === 'handoff.prepare')
+            history.push('verifying', 'release_ready');
+        else if (event.type === 'run.abort')
+            history.push('aborted');
+        else if (event.type === 'run.block' || event.type.endsWith('.exhausted')) {
+            if (!['blocked', 'aborted', 'release_ready'].includes(history.at(-1)))
+                history.push('blocked');
+        }
+    }
+    return { history, counters, implementers };
 }
 function validateRun() {
     ensureRoot();
@@ -586,7 +846,20 @@ function validateRun() {
     const before = gitText('status', '--porcelain=v1', '-z', '--untracked-files=all');
     const runState = state();
     assertV2(runState, 'run state');
-    validateManifest(path);
+    const authoritative = validateManifest(path, { rejectOrphans: true });
+    const log = events(path);
+    if (!log.length || log[0].type !== 'run.init' || log.some((event, index) => event.sequence !== index + 1 || event.data?.run_id && event.data.run_id !== runId()))
+        fail('event sequence or run binding is invalid', EXIT.invalid);
+    const rebuilt = reconstruct(log);
+    // Every object named by the manifest must belong to this run where it carries
+    // a run identifier; hashes are checked before parsing, so re-hashing only one
+    // record cannot bypass this cross-link reconstruction.
+    for (const name of Object.keys(authoritative.files))
+        if (name.endsWith('.json') && name !== 'events.json') {
+            const value = json(recordPath(path, name));
+            if (value.run_id !== undefined && value.run_id !== runId())
+                fail(`cross-run authoritative record: ${name}`, EXIT.invalid);
+        }
     if (runState.history.at(-1) !== runState.state)
         fail('state/history disagreement');
     for (const [prior, next] of runState.history.slice(1).map((value, index) => [runState.history[index], value]))
@@ -599,11 +872,45 @@ function validateRun() {
     assertV2(intent, 'intent');
     if (intent.confirmation_state !== 'confirmed' || !DOTS.every((dot) => intent.dots[dot]?.confirmed))
         fail('intent is not fully confirmed', EXIT.blocked);
+    for (const dot of DOTS) {
+        const item = intent.dots[dot];
+        const proposal = loadRecord(`proposals/${dot}-r${item.revision}.json`);
+        if (proposal.run_id !== runId() || proposal.content_hash !== item.content_hash || proposal.value !== item.value)
+            fail(`intent proposal cross-link mismatch: ${dot}`, EXIT.invalid);
+        const approval = Object.keys(authoritative.files).filter((name) => name.startsWith(`receipts/approval-intent-${dot}-r${item.revision}`)).map((name) => loadRecord(name));
+        if (approval.length !== 1 || approval[0].displayed_content_hash !== item.content_hash)
+            fail(`intent approval membership mismatch: ${dot}`, EXIT.invalid);
+    }
     const tasks = loadTasks();
     assertV2(tasks, 'tasks');
     assertDag(tasks.tasks);
+    rebuilt.counters.delegations = new Set(tasks.tasks.map((task) => task.delegation_id)).size + log.filter((event) => event.type === 'authority.revise').length;
+    if (canonical(runState.history) !== canonical(rebuilt.history))
+        fail('state history is not reconstructible from events', EXIT.invalid);
+    for (const field of ['delegations', 'implementation_tasks', 'fix_review_cycles', 'retries'])
+        if (runState.counters[field] !== rebuilt.counters[field])
+            fail(`counter is not reconstructible from events: ${field}`, EXIT.invalid);
     if (tasks.tasks.some((task) => task.approved_authority_hash !== runState.authority_hash))
         fail('post-approval authority drift', EXIT.blocked);
+    if (runState.authority_hash) {
+        const authorities = loadRecord('task-authorities.json');
+        if (sha256(authorities) !== runState.authority_hash)
+            fail('authority content hash mismatch', EXIT.invalid);
+        for (const task of tasks.tasks) {
+            const entry = authorities.tasks.find((item) => item.task_id === task.task_id);
+            if (!entry || task.task_authority_hash !== sha256(entry))
+                fail(`task authority cross-link mismatch: ${task.task_id}`, EXIT.invalid);
+        }
+    }
+    if (['approved', 'implementing', 'verifying', 'release_ready'].includes(runState.state)) {
+        const plan = readFileSync(recordPath(path, 'plan.md'), 'utf8');
+        const planHash = sha256(plan);
+        const authorities = loadRecord('task-authorities.json');
+        const approvals = Object.keys(authoritative.files).filter((name) => name.startsWith('receipts/approval-plan-') && !name.includes('rejection')).map((name) => loadRecord(name));
+        const matching = approvals.filter((receipt) => receipt.receipt_type === 'plan' && receipt.displayed_content_hash === planHash && receipt.authority_hash === sha256(authorities));
+        if (matching.length !== 1)
+            fail('plan approval receipt membership or hash mismatch', EXIT.invalid);
+    }
     if (runState.protected_effects_performed.length)
         fail('protected effect recorded without active host approval', EXIT.blocked);
     let releaseReady = false;
@@ -613,35 +920,35 @@ function validateRun() {
             fail('wrong release branch', EXIT.blocked);
         if (!cleanWorktree())
             fail('release candidate worktree is dirty', EXIT.blocked);
-        for (const required of ['plan.md', 'task-authorities.json', 'review.json', 'artifact-manifest.json', 'handoff.md'])
-            if (!existsSync(join(path, required)))
+        for (const required of ['plan.md', 'task-authorities.json', 'review.json', 'artifact-manifest.json', 'handoff.md', 'verification.json'])
+            if (!manifest(path).files[required])
                 fail(`missing authoritative record: ${required}`, EXIT.blocked);
-        markdownSections(readFileSync(join(path, 'plan.md'), 'utf8'), PLAN_SECTIONS, 'plan');
-        markdownSections(readFileSync(join(path, 'handoff.md'), 'utf8'), HANDOFF_SECTIONS, 'handoff');
+        markdownSections(readFileSync(recordPath(path, 'plan.md'), 'utf8'), PLAN_SECTIONS, 'plan');
+        markdownSections(readFileSync(recordPath(path, 'handoff.md'), 'utf8'), HANDOFF_SECTIONS, 'handoff');
         const review = loadRecord('review.json');
         const identities = [...review.implementer_delegation_ids, review.tester_delegation_id, review.reviewer_delegation_id];
         if (review.verdict !== 'pass' || new Set(identities).size !== identities.length)
             fail('independent review gate failed', EXIT.blocked);
         if (git(['merge-base', '--is-ancestor', review.reviewed_sha, 'HEAD'], { allowFailure: true }).status !== 0)
             fail('reviewed commit ancestry is invalid', EXIT.blocked);
+        const allowedPrefix = `.raw-to-release/runs/${runId()}/`;
+        const changedAfterReview = gitText('diff', '--name-only', `${review.reviewed_sha}..HEAD`).split(/\r?\n/).filter(Boolean);
+        if (changedAfterReview.some((name) => !name.replaceAll('\\', '/').startsWith(allowedPrefix)))
+            fail('product changed after independent review', EXIT.blocked);
         const tracked = git(['ls-files', '--error-unmatch', '--', relative(root, path).replaceAll('\\', '/')], { allowFailure: true }).status === 0;
         if (!tracked)
             fail('authoritative run artifacts are untracked', EXIT.blocked);
-        const receiptsDir = join(path, 'receipts');
         for (const task of tasks.tasks)
             for (const criterion of task.acceptance_evidence || []) {
-                const receiptPath = Object.keys(manifest(path).files).find((name) => name.startsWith('receipts/command-') && json(join(path, name)).task_id === task.task_id && json(join(path, name)).command_id === criterion);
-                if (!receiptPath)
+                const receipt = commandReceipts(path, task.task_id, criterion).at(-1);
+                if (!receipt)
                     fail(`missing command receipt: ${criterion}`, EXIT.blocked);
-                const receipt = loadRecord(receiptPath);
                 if (receipt.receipt_type !== 'command' || receipt.outcome !== 'pass' || receipt.exit_code !== 0 || receipt.implementation_sha !== review.reviewed_sha)
-                    fail(`stale or fabricated evidence: ${criterion}`, EXIT.blocked);
+                    fail(`stale or fabricated latest evidence: ${criterion}`, EXIT.blocked);
                 const approved = task.commands.find((command) => command.command_id === receipt.command_id);
                 if (!approved || canonical(approved.argv) !== canonical(receipt.argv))
                     fail(`receipt argv differs from approval: ${criterion}`, EXIT.blocked);
             }
-        if (!existsSync(receiptsDir))
-            fail('evidence receipts are missing', EXIT.blocked);
         const artifactManifest = loadRecord('artifact-manifest.json');
         for (const artifact of artifactManifest.artifacts) {
             const target = safeRelative(artifact.path);
@@ -652,12 +959,15 @@ function validateRun() {
             if (git(['merge-base', '--is-ancestor', artifact.owning_commit, 'HEAD'], { allowFailure: true }).status !== 0)
                 fail(`artifact owning commit is not an ancestor: ${artifact.path}`, EXIT.blocked);
         }
+        const verification = loadRecord('verification.json');
+        if (verification.run_id !== runId() || verification.implementation_sha !== review.reviewed_sha || verification.review_receipt !== receiptName('review', review.receipt_id) || verification.outcome !== 'pass')
+            fail('verification record cross-link mismatch', EXIT.blocked);
         releaseReady = true;
     }
     const after = gitText('status', '--porcelain=v1', '-z', '--untracked-files=all');
     if (before !== after)
         fail('read-only validation mutated the repository', EXIT.internal);
-    output({ valid: true, release_ready: releaseReady, run_id: runId(), implementation_sha: existsSync(join(path, 'review.json')) ? loadRecord('review.json').reviewed_sha : null, final_sha: gitText('rev-parse', 'HEAD') });
+    output({ valid: true, release_ready: releaseReady, run_id: runId(), implementation_sha: manifest(path).files['review.json'] ? loadRecord('review.json').reviewed_sha : null, final_sha: gitText('rev-parse', 'HEAD') });
 }
 function auditV1() {
     ensureRoot();
@@ -690,12 +1000,18 @@ function dispatch() {
         return intentConfirm();
     if (command === 'plan' && action === 'approve')
         return planApprove();
-    if (command === 'task' && ['register', 'start', 'complete'].includes(action))
+    if (command === 'plan' && action === 'reject')
+        return planReject();
+    if (command === 'run' && ['abort', 'block'].includes(action))
+        return runTerminal(action);
+    if (command === 'task' && ['register', 'start', 'complete', 'retry', 'fallback'].includes(action))
         return taskCommand(action);
     if (command === 'evidence' && action === 'exec')
         return evidenceExec();
     if (command === 'review' && action === 'record')
         return reviewRecord();
+    if (command === 'review' && action === 'repair')
+        return reviewRepair();
     if (command === 'artifacts' && action === 'record')
         return prepareArtifacts();
     if (command === 'handoff' && action === 'prepare')

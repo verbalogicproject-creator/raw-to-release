@@ -82,17 +82,9 @@ def validate_intent(intent: dict[str, Any]) -> None:
 def validate_task(task: dict[str, Any], run_id: str) -> None:
     validate_version(task); validate_schema(task, "task-record.json")
     if set(task["allowed_tools"]) & set(task["forbidden_tools"]): raise ContractError("tool cannot be both allowed and forbidden")
-    result = task.get("result")
-    if result:
-        criteria = set(task["envelope"]["acceptance_evidence"])
-        passing_criteria: set[str] = set()
-        for evidence in result["evidence"]:
-            if evidence["run_id"] != run_id or evidence.get("task_id") != task["task_id"]: raise ContractError("task evidence link mismatch")
-            if evidence["acceptance_criterion"] not in criteria: raise ContractError("evidence does not support task acceptance")
-            if evidence["outcome"] == "pass": passing_criteria.add(evidence["acceptance_criterion"])
-        if result["status"] == "complete":
-            if any(evidence["outcome"] != "pass" for evidence in result["evidence"]): raise ContractError("complete task cannot rely on failed or unknown evidence")
-            if passing_criteria != criteria: raise ContractError("complete task lacks passing evidence for every acceptance criterion")
+    if task["task_id"] in task["dependencies"]: raise ContractError("task cannot depend on itself")
+    if task["status"] == "complete" and len(task.get("evidence_hashes", [])) < len(task["acceptance_evidence"]):
+        raise ContractError("complete task lacks receipt hashes for every acceptance criterion")
 
 def validate_run_state(state: dict[str, Any]) -> None:
     validate_version(state); validate_schema(state, "run-state.json")
@@ -115,25 +107,11 @@ def validate_bundle(bundle: dict[str, Any]) -> None:
     if len(tasks) > LIMITS["implementation_tasks"]: raise ContractError("implementation task limit exceeded")
     ids = {task["task_id"] for task in tasks}
     if len(ids) != len(tasks): raise ContractError("duplicate task id")
-    evidence_ids: set[str] = set()
-    evidence_by_id: dict[str, dict[str, Any]] = {}
     for task in tasks:
         validate_task(task, state["run_id"])
         if not set(task["dependencies"]) <= ids: raise ContractError("unknown task dependency")
-        for evidence in task.get("result", {}).get("evidence", []):
-            if evidence["evidence_id"] in evidence_ids: raise ContractError("duplicate evidence id")
-            evidence_ids.add(evidence["evidence_id"])
-            evidence_by_id[evidence["evidence_id"]] = evidence
     if state["state"] == "release_ready":
-        if not tasks or any(task.get("result", {}).get("status") != "complete" for task in tasks): raise ContractError("release_ready requires every task complete")
-        required = set(state["gates"]["test_evidence_ids"] + state["gates"]["review_evidence_ids"])
-        if not required <= evidence_ids: raise ContractError("run gate evidence is not linked to task evidence")
-        for evidence_id in state["gates"]["test_evidence_ids"]:
-            evidence = evidence_by_id[evidence_id]
-            if evidence["kind"] != "command" or evidence["outcome"] != "pass": raise ContractError("test gate requires passing command evidence")
-        for evidence_id in state["gates"]["review_evidence_ids"]:
-            evidence = evidence_by_id[evidence_id]
-            if evidence["kind"] != "review" or evidence["outcome"] != "pass": raise ContractError("review gate requires passing review evidence")
+        if not tasks or any(task.get("status") != "complete" for task in tasks): raise ContractError("release_ready requires every task complete")
 
 def journey_outcome(case: dict[str, Any]) -> str:
     event, data = case["event"], case.get("input", {})

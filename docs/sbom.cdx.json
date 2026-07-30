@@ -26,7 +26,7 @@
     {
       "type": "library",
       "name": "ajv",
-      "version": "8.17.1",
+      "version": "8.20.0",
       "scope": "optional",
       "licenses": [
         {

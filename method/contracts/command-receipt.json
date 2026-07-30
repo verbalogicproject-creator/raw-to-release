@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw-to-release.dev/contracts/2/command-receipt.json",
   "type": "object",
-  "required": ["contract_version", "receipt_type", "receipt_id", "run_id", "task_id", "command_id", "argv", "cwd", "implementation_sha", "started_at", "ended_at", "exit_code", "outcome", "test_counts", "stdout_sha256", "stderr_sha256", "failure_excerpt"],
+  "required": ["contract_version", "receipt_type", "receipt_id", "run_id", "task_id", "command_id", "argv", "cwd", "implementation_sha", "tester_delegation_id", "attempt", "started_at", "ended_at", "exit_code", "outcome", "test_counts", "stdout_sha256", "stderr_sha256", "failure_excerpt"],
   "additionalProperties": false,
   "properties": {
     "contract_version": {"$ref": "common.json#/$defs/contract_version"},
@@ -21,6 +21,8 @@
     "test_counts": {"oneOf": [{"type": "null"}, {"type": "object", "required": ["passed", "failed"], "additionalProperties": false, "properties": {"passed": {"type": "integer", "minimum": 0}, "failed": {"type": "integer", "minimum": 0}}}]},
     "stdout_sha256": {"$ref": "common.json#/$defs/sha256"},
     "stderr_sha256": {"$ref": "common.json#/$defs/sha256"},
-    "failure_excerpt": {"type": "string", "maxLength": 2048}
+    "failure_excerpt": {"type": "string", "maxLength": 2048},
+    "tester_delegation_id": {"type": "string", "minLength": 1},
+    "attempt": {"type": "integer", "minimum": 1}
   }
 }

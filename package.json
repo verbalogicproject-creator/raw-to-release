@@ -2,7 +2,9 @@
   "name": "raw-to-release-tooling",
   "private": true,
   "version": "0.1.1",
-  "engines": {"node": ">=22"},
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "node scripts/build-r2rctl.mjs",
     "check:bundle": "node scripts/build-r2rctl.mjs --check",
@@ -12,7 +14,7 @@
   },
   "devDependencies": {
     "@types/node": "22.15.3",
-    "ajv": "8.17.1",
+    "ajv": "8.20.0",
     "typescript": "5.8.3"
   }
 }

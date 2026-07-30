@@ -5,6 +5,9 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import Ajv2020 from 'ajv/dist/2020.js';
+import { readdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 
 const PROJECT = resolve(import.meta.dirname, '..');
 const CLI = join(PROJECT, 'plugins', 'raw-to-release', 'skills', 'raw-to-release', 'bin', 'r2rctl.mjs');
@@ -37,6 +40,10 @@ function cli(root, ...args) {
 function ok(result) { assert.equal(result.status, 0, result.stderr); return JSON.parse(result.stdout); }
 function init(root) { return ok(cli(root, 'run', 'init', '--run', RUN)); }
 function runPath(root) { return join(root, '.raw-to-release', 'runs', RUN); }
+function active(root, name) { const manifest = JSON.parse(readFileSync(join(runPath(root), 'run-manifest.json'))); return join(runPath(root), 'generations', String(manifest.generation), name); }
+function activeJson(root, name) { return JSON.parse(readFileSync(active(root, name), 'utf8')); }
+function canonical(value) { if (value === null || typeof value !== 'object') return JSON.stringify(value); if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`; return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`; }
+function hash(value) { return createHash('sha256').update(canonical(value)).digest('hex'); }
 
 function confirmIntent(root) {
   for (const dot of ['literal-task', 'strategic-intent', 'boundaries', 'task-type', 'relevant-principles']) {
@@ -45,11 +52,11 @@ function confirmIntent(root) {
   }
 }
 
-function writePlan(root) {
+function writePlan(root, authorities = { tasks: [{ task_id: 'task-1', allowed_tools: [], forbidden_tools: [], commands: [{ command_id: 'test', argv: [process.execPath, '-e', "console.log('1 passed')"], cwd: '.', kind: 'test' }] }] }) {
   const plan = ['# Plan', 'Scope', 'Architecture', 'Affected areas', 'Tests', 'Risks', 'Exclusions', 'Task authorities']
     .map((heading, index) => index === 0 ? `${heading}\n` : `## ${heading}\n\nDefined ${heading.toLowerCase()}.\n`).join('\n');
   writeFileSync(join(root, 'plan-input.md'), plan);
-  writeFileSync(join(root, 'authorities.json'), JSON.stringify({ tasks: [{ task_id: 'task-1', allowed_tools: ['local-exec'], forbidden_tools: ['network', 'push'] }] }));
+  writeFileSync(join(root, 'authorities.json'), JSON.stringify(authorities));
   return ok(cli(root, 'plan', 'approve', '--run', RUN, '--file', 'plan-input.md', '--authority-file', 'authorities.json', '--user', 'human-1'));
 }
 
@@ -71,7 +78,7 @@ test('preflight fails closed for dirty worktrees and unobservable delegation IDs
 test('run init uses a manifest-last transaction and a chained event log', () => {
   const root = repository(); init(root); const path = runPath(root);
   const manifest = JSON.parse(readFileSync(join(path, 'run-manifest.json')));
-  const events = JSON.parse(readFileSync(join(path, 'events.json')));
+  const events = JSON.parse(readFileSync(active(root, 'events.json')));
   assert.equal(manifest.contract_version, '2.0.0'); assert.equal(manifest.generation, 1);
   assert.equal(events[0].type, 'run.init'); assert.equal(events[0].prior_event_hash, null);
   assert.ok(/^[a-f0-9]{64}$/.test(events[0].event_hash));
@@ -112,7 +119,7 @@ test('plan approval requires deterministic sections and seals the authority hash
 
 test('tasks reject authority drift, self-dependencies, and unknown cycle edges', () => {
   const root = repository(); init(root); confirmIntent(root); const approved = writePlan(root);
-  const base = { contract_version: '2.0.0', task_id: 'task-1', delegation_id: 'impl-1', approved_authority_hash: approved.authority_hash, dependencies: [], commands: [{ command_id: 'test', argv: [process.execPath, '-e', "console.log('1 passed')"], cwd: '.', kind: 'test' }], acceptance_evidence: ['test'] };
+  const base = { contract_version: '2.0.0', task_id: 'task-1', delegation_id: 'impl-1', tester_delegation_id: 'tester-1', approved_authority_hash: approved.authority_hash, task_authority_hash: hash(JSON.parse(readFileSync(join(root, 'authorities.json'))).tasks[0]), dependencies: [], allowed_tools: [], forbidden_tools: [], commands: [{ command_id: 'test', argv: [process.execPath, '-e', "console.log('1 passed')"], cwd: '.', kind: 'test' }], acceptance_evidence: ['test'] };
   writeFileSync(join(root, 'task.json'), JSON.stringify({ ...base, approved_authority_hash: 'f'.repeat(64) }));
   let result = cli(root, 'task', 'register', '--run', RUN, '--id', 'task-1', '--file', 'task.json'); assert.equal(result.status, 3); assert.match(result.stderr, /authority drift/);
   writeFileSync(join(root, 'task.json'), JSON.stringify({ ...base, dependencies: ['task-1'] }));
@@ -123,7 +130,7 @@ test('tasks reject authority drift, self-dependencies, and unknown cycle edges',
 
 test('evidence exec uses only approved argv and derives a bounded receipt from execution', () => {
   const root = repository(); init(root); confirmIntent(root); const approved = writePlan(root);
-  const task = { contract_version: '2.0.0', task_id: 'task-1', delegation_id: 'impl-1', approved_authority_hash: approved.authority_hash, dependencies: [], commands: [{ command_id: 'test', argv: [process.execPath, '-e', "console.log('1 passed')"], cwd: '.', kind: 'test' }], acceptance_evidence: ['test'] };
+  const task = { contract_version: '2.0.0', task_id: 'task-1', delegation_id: 'impl-1', tester_delegation_id: 'tester-1', approved_authority_hash: approved.authority_hash, task_authority_hash: hash(JSON.parse(readFileSync(join(root, 'authorities.json'))).tasks[0]), dependencies: [], allowed_tools: [], forbidden_tools: [], commands: [{ command_id: 'test', argv: [process.execPath, '-e', "console.log('1 passed')"], cwd: '.', kind: 'test' }], acceptance_evidence: ['test'] };
   writeFileSync(join(root, 'task.json'), JSON.stringify(task));
   ok(cli(root, 'task', 'register', '--run', RUN, '--id', 'task-1', '--file', 'task.json')); ok(cli(root, 'task', 'start', '--run', RUN, '--id', 'task-1'));
   let result = cli(root, 'evidence', 'exec', '--run', RUN, '--task', 'task-1', '--command', 'test', '--', 'echo', 'fabricated');
@@ -135,8 +142,8 @@ test('evidence exec uses only approved argv and derives a bounded receipt from e
 });
 
 test('failed commands retain child exit and map the operation to exit 5', () => {
-  const root = repository(); init(root); confirmIntent(root); const approved = writePlan(root);
-  const task = { contract_version: '2.0.0', task_id: 'task-1', delegation_id: 'impl-1', approved_authority_hash: approved.authority_hash, dependencies: [], commands: [{ command_id: 'test', argv: [process.execPath, '-e', "console.error('secret=leak');process.exit(7)"], cwd: '.', kind: 'test' }], acceptance_evidence: ['test'] };
+  const root = repository(); init(root); confirmIntent(root); const authority = { task_id: 'task-1', allowed_tools: [], forbidden_tools: [], commands: [{ command_id: 'test', argv: [process.execPath, '-e', "console.error('secret=leak');process.exit(7)"], cwd: '.', kind: 'test' }] }; const approved = writePlan(root, { tasks: [authority] });
+  const task = { contract_version: '2.0.0', task_id: 'task-1', delegation_id: 'impl-1', tester_delegation_id: 'tester-1', approved_authority_hash: approved.authority_hash, task_authority_hash: hash(authority), dependencies: [], allowed_tools: [], forbidden_tools: [], commands: authority.commands, acceptance_evidence: ['test'] };
   writeFileSync(join(root, 'task.json'), JSON.stringify(task)); ok(cli(root, 'task', 'register', '--run', RUN, '--id', 'task-1', '--file', 'task.json')); ok(cli(root, 'task', 'start', '--run', RUN, '--id', 'task-1'));
   const result = cli(root, 'evidence', 'exec', '--run', RUN, '--task', 'task-1', '--command', 'test');
   assert.equal(result.status, 5); const receipt = JSON.parse(result.stdout); assert.equal(receipt.exit_code, 7); assert.equal(receipt.outcome, 'fail'); assert.doesNotMatch(receipt.failure_excerpt, /leak/); assert.match(receipt.failure_excerpt, /redacted/);
@@ -169,9 +176,9 @@ test('artifact recording rejects absolute, escaping, symlinked, and untracked pa
 
 test('validate rejects event corruption and leaves every byte untouched', () => {
   const root = repository(); init(root); const path = runPath(root);
-  writeFileSync(join(path, 'events.json'), '[{"corrupt":true}]\n'); const before = readFileSync(join(path, 'events.json'));
+  writeFileSync(active(root, 'events.json'), '[{"corrupt":true}]\n'); const before = readFileSync(active(root, 'events.json'));
   const result = cli(root, 'validate', '--run', RUN); assert.equal(result.status, 2); assert.match(result.stderr, /hash mismatch|hash chain/);
-  assert.deepEqual(readFileSync(join(path, 'events.json')), before);
+  assert.deepEqual(readFileSync(active(root, 'events.json')), before);
 });
 
 test('audit-v1 is read-only and explicitly non-resumable', () => {
@@ -181,4 +188,80 @@ test('audit-v1 is read-only and explicitly non-resumable', () => {
   assert.equal(result.audit_only, true); assert.equal(result.resumable, false); assert.deepEqual(readFileSync(join(path, 'run-state.json')), before);
   writeFileSync(join(path, 'run-state.json'), JSON.stringify({ contract_version: '3.0.0', run_id: RUN, state: 'intake', history: ['intake'] }));
   assert.equal(cli(root, 'audit-v1', '--run', RUN).status, 2);
+});
+
+test('records emitted by a real CLI journey conform to canonical contract 2.0', () => {
+  const root = repository(); init(root);
+  const contracts = join(PROJECT, 'method', 'contracts'); const ajv = new Ajv2020({ strict: true, allErrors: true });
+  for (const name of readdirSync(contracts).filter((item) => item.endsWith('.json')).sort()) ajv.addSchema(JSON.parse(readFileSync(join(contracts, name), 'utf8')));
+  assert.equal(ajv.getSchema('https://raw-to-release.dev/contracts/2/run-state.json')(activeJson(root, 'run-state.json')), true);
+  ok(cli(root, 'intent', 'propose', '--run', RUN, '--dot', 'literal_task', '--value', 'literal'));
+  assert.equal(ajv.getSchema('https://raw-to-release.dev/contracts/2/intent-record.json')(activeJson(root, 'intent.json')), true);
+  for (const dot of ['strategic_intent', 'boundaries', 'task_type', 'relevant_principles']) ok(cli(root, 'intent', 'propose', '--run', RUN, '--dot', dot, '--value', dot));
+  for (const dot of ['literal_task', 'strategic_intent', 'boundaries', 'task_type', 'relevant_principles']) {
+    const intent = activeJson(root, 'intent.json'); ok(cli(root, 'intent', 'confirm', '--run', RUN, '--dot', dot, '--revision', String(intent.dots[dot].revision), '--hash', intent.dots[dot].content_hash, '--user', 'human-1'));
+  }
+  const approved = writePlan(root); const authority = JSON.parse(readFileSync(join(root, 'authorities.json'))).tasks[0];
+  const task = { contract_version: '2.0.0', task_id: 'task-1', delegation_id: 'impl-1', tester_delegation_id: 'tester-1', approved_authority_hash: approved.authority_hash, task_authority_hash: hash(authority), dependencies: [], allowed_tools: authority.allowed_tools, forbidden_tools: authority.forbidden_tools, commands: authority.commands, acceptance_evidence: ['test'] };
+  writeFileSync(join(root, 'task.json'), JSON.stringify(task)); ok(cli(root, 'task', 'register', '--run', RUN, '--id', 'task-1', '--file', 'task.json'));
+  assert.equal(ajv.getSchema('https://raw-to-release.dev/contracts/2/tasks.json')(activeJson(root, 'tasks.json')), true);
+  ok(cli(root, 'task', 'start', '--run', RUN, '--id', 'task-1')); const receipt = ok(cli(root, 'evidence', 'exec', '--run', RUN, '--task', 'task-1', '--command', 'test'));
+  assert.equal(ajv.getSchema('https://raw-to-release.dev/contracts/2/command-receipt.json')(activeJson(root, receipt.receipt)), true);
+});
+
+test('an interrupted future generation is never absorbed on resume', () => {
+  const root = repository(); init(root); const path = runPath(root); const before = readFileSync(join(path, 'run-manifest.json'));
+  cpSync(join(path, 'generations', '1'), join(path, 'generations', '2'), { recursive: true });
+  writeFileSync(join(path, 'generations', '2', 'uncommitted.json'), '{}\n');
+  const result = cli(root, 'intent', 'propose', '--run', RUN, '--dot', 'literal_task', '--value', 'must not absorb');
+  assert.equal(result.status, 2); assert.match(result.stderr, /orphan|ambiguous/); assert.deepEqual(readFileSync(join(path, 'run-manifest.json')), before);
+});
+
+test('task registration is impossible before a sealed approved plan', () => {
+  const root = repository(); init(root);
+  writeFileSync(join(root, 'task.json'), JSON.stringify({ contract_version: '2.0.0', task_id: 'task-1' }));
+  const result = cli(root, 'task', 'register', '--run', RUN, '--id', 'task-1', '--file', 'task.json');
+  assert.equal(result.status, 3); assert.match(result.stderr, /approved sealed plan/);
+});
+
+test('protected command classes are denied before spawn', () => {
+  const root = repository(); init(root); confirmIntent(root);
+  const authority = { task_id: 'task-1', allowed_tools: ['git'], forbidden_tools: ['push'], commands: [{ command_id: 'tests', argv: ['git', 'push', 'origin', 'main'], cwd: '.', kind: 'test' }] };
+  const approved = writePlan(root, { tasks: [authority] });
+  const task = { contract_version: '2.0.0', task_id: 'task-1', delegation_id: 'impl-1', tester_delegation_id: 'tester-1', approved_authority_hash: approved.authority_hash, task_authority_hash: hash(authority), dependencies: [], allowed_tools: authority.allowed_tools, forbidden_tools: authority.forbidden_tools, commands: authority.commands, acceptance_evidence: ['tests'] };
+  writeFileSync(join(root, 'task.json'), JSON.stringify(task)); ok(cli(root, 'task', 'register', '--run', RUN, '--id', 'task-1', '--file', 'task.json')); ok(cli(root, 'task', 'start', '--run', RUN, '--id', 'task-1'));
+  const result = cli(root, 'evidence', 'exec', '--run', RUN, '--task', 'task-1', '--command', 'tests');
+  assert.equal(result.status, 3); assert.match(result.stderr, /protected|forbidden/);
+});
+
+test('plan rejection invalidates affected Dots until exact reconfirmation', () => {
+  const root = repository(); init(root); confirmIntent(root); writePlan(root);
+  ok(cli(root, 'plan', 'reject', '--run', RUN, '--user', 'human-1', '--reason', 'boundary changed', '--dots', 'boundaries'));
+  let intent = activeJson(root, 'intent.json'); assert.equal(intent.confirmation_state, 'draft'); assert.equal(intent.dots.boundaries.confirmed, false);
+  assert.equal(cli(root, 'plan', 'approve', '--run', RUN, '--file', 'plan-input.md', '--authority-file', 'authorities.json', '--user', 'human-1').status, 3);
+  const proposed = ok(cli(root, 'intent', 'propose', '--run', RUN, '--dot', 'boundaries', '--value', 'revised boundary'));
+  ok(cli(root, 'intent', 'confirm', '--run', RUN, '--dot', 'boundaries', '--revision', String(proposed.revision), '--hash', proposed.content_hash, '--user', 'human-1'));
+  assert.equal(writePlan(root).state, 'approved');
+});
+
+test('latest-attempt policy requires retry and refuses pass overwrite', () => {
+  const root = repository(); init(root); confirmIntent(root);
+  const script = "const fs=require('fs'),p='.raw-to-release/runtime/retry-marker';fs.mkdirSync('.raw-to-release/runtime',{recursive:true});if(!fs.existsSync(p)){fs.writeFileSync(p,'1');process.exit(7)}console.log('1 passed')";
+  const authority = { task_id: 'task-1', allowed_tools: ['node'], forbidden_tools: [], commands: [{ command_id: 'tests', argv: [process.execPath, '-e', script], cwd: '.', kind: 'test' }] };
+  const approved = writePlan(root, { tasks: [authority] }); const task = { contract_version: '2.0.0', task_id: 'task-1', delegation_id: 'impl-1', tester_delegation_id: 'tester-1', approved_authority_hash: approved.authority_hash, task_authority_hash: hash(authority), dependencies: [], allowed_tools: authority.allowed_tools, forbidden_tools: [], commands: authority.commands, acceptance_evidence: ['tests'] };
+  writeFileSync(join(root, 'task.json'), JSON.stringify(task)); ok(cli(root, 'task', 'register', '--run', RUN, '--id', 'task-1', '--file', 'task.json')); ok(cli(root, 'task', 'start', '--run', RUN, '--id', 'task-1'));
+  assert.equal(cli(root, 'evidence', 'exec', '--run', RUN, '--task', 'task-1', '--command', 'tests').status, 5);
+  assert.equal(cli(root, 'evidence', 'exec', '--run', RUN, '--task', 'task-1', '--command', 'tests').status, 3);
+  ok(cli(root, 'task', 'retry', '--run', RUN, '--id', 'task-1')); const passed = ok(cli(root, 'evidence', 'exec', '--run', RUN, '--task', 'task-1', '--command', 'tests'));
+  assert.equal(passed.attempt, 2); assert.equal(passed.outcome, 'pass'); assert.equal(cli(root, 'evidence', 'exec', '--run', RUN, '--task', 'task-1', '--command', 'tests').status, 3);
+  ok(cli(root, 'task', 'complete', '--run', RUN, '--id', 'task-1'));
+});
+
+test('non-init traversal and nested-symlink cwd fail closed', () => {
+  const root = repository(); assert.equal(cli(root, 'validate', '--run', '../escape').status, 2);
+  init(root); confirmIntent(root); const outside = mkdtempSync(join(tmpdir(), 'r2r-outside-')); symlinkSync(outside, join(root, 'linked-dir'));
+  const authority = { task_id: 'task-1', allowed_tools: ['node'], forbidden_tools: [], commands: [{ command_id: 'tests', argv: [process.execPath, '-e', "console.log('1 passed')"], cwd: 'linked-dir', kind: 'test' }] };
+  const approved = writePlan(root, { tasks: [authority] }); const task = { contract_version: '2.0.0', task_id: 'task-1', delegation_id: 'impl-1', tester_delegation_id: 'tester-1', approved_authority_hash: approved.authority_hash, task_authority_hash: hash(authority), dependencies: [], allowed_tools: authority.allowed_tools, forbidden_tools: [], commands: authority.commands, acceptance_evidence: ['tests'] };
+  writeFileSync(join(root, 'task.json'), JSON.stringify(task)); ok(cli(root, 'task', 'register', '--run', RUN, '--id', 'task-1', '--file', 'task.json')); ok(cli(root, 'task', 'start', '--run', RUN, '--id', 'task-1'));
+  const result = cli(root, 'evidence', 'exec', '--run', RUN, '--task', 'task-1', '--command', 'tests'); assert.equal(result.status, 2); assert.match(result.stderr, /symlink/);
 });
