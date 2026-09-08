@@ -2,15 +2,15 @@
   "name": "raw-to-release",
   "version": "0.1.1",
   "description": "Turn confirmed ideas into independently reviewed local branches.",
-  "author": {"name": "Eyal Bar Or"},
-  "license": "MIT",
+  "author": {"name": "Eyal Nof"},
+  "license": "Apache-2.0",
   "keywords": ["planning", "verification", "workflow"],
   "skills": "./skills/",
   "interface": {
     "displayName": "Raw to Release",
     "shortDescription": "Confirmed ideas to verified local branches",
     "longDescription": "A gated, evidence-led workflow for local delivery.",
-    "developerName": "Eyal Bar Or",
+    "developerName": "Eyal Nof",
     "category": "Productivity",
     "capabilities": ["Interactive", "Write"],
     "defaultPrompt": ["Use $raw-to-release to take my idea to a verified local branch."]

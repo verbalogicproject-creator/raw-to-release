@@ -6,3 +6,6 @@ node_modules/
 *.egg-info/
 build/
 dist/
+
+# Local release-planning memo; intentionally excluded from the public payload.
+/road-to-release.md

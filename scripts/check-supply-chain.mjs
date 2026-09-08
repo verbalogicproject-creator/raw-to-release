@@ -17,7 +17,11 @@ const packages = Object.entries(lock.packages || {}).filter(([path]) => path).ma
 if (packages.some((item) => item.license === 'UNKNOWN')) { console.error('dependency license is unknown'); process.exit(1); }
 const sbom = {
   bomFormat: 'CycloneDX', specVersion: '1.5', version: 1,
-  metadata: { component: { type: 'application', name: lock.name, version: lock.version } },
+  metadata: { component: {
+    type: 'application', name: lock.name, version: lock.version,
+    copyright: 'Copyright 2026 Eyal Nof',
+    licenses: [{ license: { id: lock.packages[''].license } }],
+  } },
   components: packages.map((item) => ({ type: 'library', name: item.name, version: item.version, scope: item.development ? 'optional' : 'required', licenses: [{ license: { id: item.license } }] })),
 };
 const licenses = `# Build dependency licenses\n\nThe installed plugin has zero runtime package dependencies.\n\n| Package | Version | License | Use |\n| --- | --- | --- | --- |\n${packages.map((item) => `| ${item.name} | ${item.version} | ${item.license} | build/test only |`).join('\n')}\n`;

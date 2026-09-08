@@ -6,7 +6,15 @@
     "component": {
       "type": "application",
       "name": "raw-to-release-tooling",
-      "version": "0.1.1"
+      "version": "0.1.1",
+      "copyright": "Copyright 2026 Eyal Nof",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
     }
   },
   "components": [
@@ -52,7 +60,7 @@
     {
       "type": "library",
       "name": "fast-uri",
-      "version": "3.1.4",
+      "version": "3.1.7",
       "scope": "optional",
       "licenses": [
         {

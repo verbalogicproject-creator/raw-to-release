@@ -2,6 +2,7 @@
   "name": "raw-to-release-tooling",
   "private": true,
   "version": "0.1.1",
+  "author": "Eyal Nof",
   "engines": {
     "node": ">=22"
   },

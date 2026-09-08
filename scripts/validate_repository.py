@@ -27,12 +27,12 @@ def load(path: Path):
 
 def main() -> int:
     manifest = load(PLUGIN / ".codex-plugin" / "plugin.json")
-    for key, value in {"name": "raw-to-release", "version": "0.1.1", "license": "MIT", "skills": "./skills/"}.items():
+    for key, value in {"name": "raw-to-release", "version": "0.1.1", "license": "Apache-2.0", "skills": "./skills/"}.items():
         if manifest.get(key) != value: fail(f"manifest {key}")
     if not SEMVER.fullmatch(manifest["version"]): fail("manifest version is not strict semver")
-    if manifest.get("author", {}).get("name") != "Eyal Bar Or": fail("manifest author")
+    if manifest.get("author", {}).get("name") != "Eyal Nof": fail("manifest author")
     ui = manifest.get("interface", {})
-    if ui.get("displayName") != "Raw to Release" or ui.get("category") != "Productivity" or set(ui.get("capabilities", [])) != {"Interactive", "Write"}: fail("manifest interface")
+    if ui.get("displayName") != "Raw to Release" or ui.get("developerName") != "Eyal Nof" or ui.get("category") != "Productivity" or set(ui.get("capabilities", [])) != {"Interactive", "Write"}: fail("manifest interface")
     if not ui.get("defaultPrompt") or any(len(item) > 128 for item in ui["defaultPrompt"]): fail("starter prompts")
     if any(key in manifest for key in ("hooks", "apps", "mcpServers")): fail("Phase 1 must be skills-only")
 

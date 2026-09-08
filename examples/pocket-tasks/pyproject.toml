@@ -7,6 +7,8 @@ name = "raw-to-release-pocket-tasks"
 version = "0.1.0"
 description = "Compounding Raw to Release tutorial CLI"
 requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "Eyal Nof" }]
 
 [project.scripts]
 pocket-tasks = "pocket_tasks.cli:main"
