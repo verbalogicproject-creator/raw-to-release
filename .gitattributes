@@ -1,0 +1,10 @@
+# The r2rctl bundle is a generated, byte-defined artifact: `npm run check:bundle`
+# compares the committed file against a freshly compiled one for exact equality.
+# Without this, git converts LF to CRLF when checking out on Windows, the bytes
+# stop matching, and the reproducibility check fails on windows-latest only —
+# while passing on Linux and macOS, which is how it went unnoticed.
+*.mjs text eol=lf
+*.js  text eol=lf
+*.json text eol=lf
+*.py  text eol=lf
+*.sh  text eol=lf

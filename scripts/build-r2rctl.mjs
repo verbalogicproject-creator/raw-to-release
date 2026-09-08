@@ -26,7 +26,11 @@ if (diagnostics.some((diagnostic) => diagnostic.category === ts.DiagnosticCatego
 const banner = '#!/usr/bin/env node\n';
 const compiled = `${banner}${result.outputText.replace(/^#!.*\n/, '').replaceAll('\r\n', '\n')}`;
 if (process.argv.includes('--check')) {
-  try { if (await readFile(target, 'utf8') === compiled) process.exit(0); } catch { /* missing is drift */ }
+  // Normalise the read side too: the generated side is already LF-normalised on
+  // line 27, and comparing a normalised string against a raw one is what made this
+  // fail on Windows checkouts. .gitattributes stops the conversion; this makes the
+  // check independent of it.
+  try { if ((await readFile(target, 'utf8')).replaceAll('\r\n', '\n') === compiled) process.exit(0); } catch { /* missing is drift */ }
   console.error('r2rctl bundle is not reproducible; run npm run build'); process.exit(1);
 }
 await mkdir(resolve(target, '..'), { recursive: true });
