@@ -12,7 +12,8 @@ Public release additionally requires evidence that automation cannot manufacture
    fallback; parent and delegated questioning are probed separately.
 3. One deliberate reviewer failure is repaired within the two-cycle bound.
 4. Observations prove no merge, push, PR, deployment, or publication occurred.
-5. Linux, macOS, and Windows CI receipts and the official plugin validator pass.
+5. Linux and macOS CI receipts and the official plugin validator pass.
+   Windows is out of scope and not qualified; see docs/compatibility.md.
 
 Record only surface/version, requested and observed route/model when visible,
 fallbacks, approvals, result, and acceptance outcome. Never record transcripts

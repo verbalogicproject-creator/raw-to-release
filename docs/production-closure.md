@@ -19,7 +19,7 @@ No pending receipt is represented as a pass.
 | Performance limits | bounded counters and envelopes | static ceilings | delegation/turn/runtime/token receipt pending | pending |
 | Official plugin acceptance | skills-only 0.1.1 manifest | validator launcher fails closed | official validator/cache refresh pending | pending |
 
-Publication remains blocked until Linux, macOS, and Windows receipts; all
+Publication remains blocked until Linux and macOS receipts; all
 installed-plugin journeys; three fixtures per route; two independently
 reconstructed validating bundles; performance evidence; dependency audit;
 directory/name/trademark clearance; and final independent architect PASS with

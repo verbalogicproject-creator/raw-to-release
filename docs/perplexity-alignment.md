@@ -125,7 +125,8 @@ self-reference.
 - New production contracts cover approval receipts, command receipts, review
   receipts, tasks, verification, and artifact manifests.
 - Plan and handoff Markdown use required ordered sections.
-- CI is configured for Node 22 plus Python on Linux, macOS, and Windows.
+- CI is configured for Node 22 plus Python on Linux and macOS. Windows was
+  removed after 11 of 34 tests failed there with EPERM; it is not qualified.
 - A deterministic CycloneDX SBOM and build-license inventory are generated from
   the exact lockfile.
 
@@ -218,7 +219,8 @@ The branch is a documented blocked checkpoint, not a release candidate.
 
 The following cannot be inferred from local source tests and remain pending:
 
-- real Node 22 receipts for Linux, macOS, and Windows filesystem/Git behavior;
+- real Node 22 receipts for Linux and macOS filesystem/Git behavior (Windows is
+  out of scope; see docs/compatibility.md);
 - official plugin validation, marketplace cache refresh, and reinstall;
 - fresh installed-plugin greenfield and clean-existing journeys;
 - installed-plugin plan rejection plus affected-Dot reconfirmation;

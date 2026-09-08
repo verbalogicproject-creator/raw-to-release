@@ -3,7 +3,8 @@
 | Capability | Phase 1 status |
 | --- | --- |
 | Bundled Node 22 CLI | locally qualified; no consumer install |
-| Installed plugin on Linux/macOS/Windows | pending empirical qualification |
+| Installed plugin on Linux/macOS | pending empirical qualification |
+| Installed plugin on Windows | not qualified; 11/34 tests fail with EPERM, not in CI |
 | Codex CLI package shape | verified by local official validators |
 | Codex CLI end-to-end journeys | unverified pending fresh sessions |
 | Interaction and approval prompts | unverified per installed version |
